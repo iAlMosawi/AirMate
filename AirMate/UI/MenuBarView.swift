@@ -7,18 +7,33 @@ struct MenuBarView: View {
     @EnvironmentObject private var settings: AppSettings
 
     private var visibleDevices: [AirMateDevice] {
-        settings.showNearbyBluetooth ? store.devices : store.devices.filter { $0.kind != .bluetooth }
+        let filtered = settings.showNearbyBluetooth ? store.devices : store.devices.filter { $0.kind != .bluetooth }
+        return filtered.sorted { lhs, rhs in
+            let leftFavorite = settings.isFavorite(lhs.id)
+            let rightFavorite = settings.isFavorite(rhs.id)
+            if leftFavorite != rightFavorite { return leftFavorite && !rightFavorite }
+            if lhs.connectionState != rhs.connectionState { return lhs.connectionState == .connected }
+            return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+        }
+    }
+
+    private var lowBatteryDevices: [AirMateDevice] {
+        visibleDevices.filter { device in
+            guard let level = device.batteryLevel else { return false }
+            return level <= settings.lowBatteryThreshold && !device.isCharging
+        }
     }
 
     var body: some View {
         VStack(spacing: 0) {
             header
+            summary
 
             if visibleDevices.isEmpty {
                 ContentUnavailableView(
                     "No devices yet",
                     systemImage: "dot.radiowaves.left.and.right",
-                    description: Text("AirMate is scanning for nearby devices.")
+                    description: Text("AirMate is scanning for nearby devices. Keep Bluetooth enabled and open your AirPods case nearby.")
                 )
                 .frame(height: 220)
             } else {
@@ -72,6 +87,23 @@ struct MenuBarView: View {
             .help("Refresh devices")
         }
         .padding(12)
+    }
+
+    private var summary: some View {
+        HStack(spacing: 12) {
+            Label("\(visibleDevices.count) devices", systemImage: "rectangle.stack")
+            Spacer()
+            if !lowBatteryDevices.isEmpty {
+                Label("\(lowBatteryDevices.count) low", systemImage: "battery.25percent")
+                    .foregroundStyle(.orange)
+            } else {
+                Label("Battery OK", systemImage: "checkmark.circle")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .font(.caption)
+        .padding(.horizontal, 12)
+        .padding(.bottom, 8)
     }
 
     private var footer: some View {
