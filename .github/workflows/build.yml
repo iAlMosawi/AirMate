@@ -7,20 +7,44 @@ on:
     branches: [main]
 
 jobs:
-  build:
+  macos:
     runs-on: macos-26
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Show Xcode version
-        run: xcodebuild -version
-
-      - name: Build AirMate
+      - uses: actions/checkout@v4
+      - run: xcodebuild -version
+      - name: Build macOS app and widget
         run: |
           xcodebuild \
             -project AirMate.xcodeproj \
             -target AirMate \
             -configuration Debug \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+  ios:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build iPhone/iPad companion
+        run: |
+          xcodebuild \
+            -project AirMateMobile.xcodeproj \
+            -target AirMateMobile \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+  watchos:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Apple Watch companion
+        run: |
+          xcodebuild \
+            -project AirMateWatch.xcodeproj \
+            -target AirMateWatch \
+            -configuration Debug \
+            -sdk watchsimulator \
             CODE_SIGNING_ALLOWED=NO \
             build
