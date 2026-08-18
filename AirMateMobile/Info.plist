@@ -3,13 +3,13 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleDisplayName</key>
-    <string>AirMate Mobile</string>
+    <string>AirMate</string>
     <key>CFBundleExecutable</key>
     <string>$(EXECUTABLE_NAME)</string>
     <key>CFBundleIdentifier</key>
     <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
     <key>CFBundleName</key>
-    <string>$(PRODUCT_NAME)</string>
+    <string>AirMate</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
@@ -19,10 +19,11 @@
     <key>UILaunchScreen</key>
     <dict/>
     <key>NSLocalNetworkUsageDescription</key>
-    <string>AirMate Mobile uses your local network to report this device battery level to your Mac.</string>
+    <string>AirMate uses your local network to sync battery and device information with your AirMate Macs.</string>
     <key>NSBonjourServices</key>
     <array>
         <string>_airmate-mobile._tcp</string>
+        <string>_airmate._tcp</string>
     </array>
 </dict>
 </plist>
