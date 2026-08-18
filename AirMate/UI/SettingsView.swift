@@ -1,9 +1,20 @@
+import Charts
 import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var store: DeviceStore
     @StateObject private var audio = AudioDeviceService()
+    @State private var selectedDeviceID: UUID?
+
+    private var historyDevices: [AirMateDevice] {
+        store.devices.filter { !$0.hasAnyBattery ? store.history.samples.contains(where: { $0.deviceID == $0.deviceID }) : true }
+    }
+
+    private var selectedSamples: [BatteryHistorySample] {
+        guard let selectedDeviceID else { return Array(store.history.samples.suffix(120)) }
+        return Array(store.history.samples.filter { $0.deviceID == selectedDeviceID }.suffix(240))
+    }
 
     var body: some View {
         Form {
@@ -27,6 +38,35 @@ struct SettingsView: View {
                     .frame(width: 100)
                 }
                 LabeledContent("History samples", value: "\(store.history.samples.count)")
+            }
+
+            Section("Battery Statistics") {
+                Picker("Device", selection: $selectedDeviceID) {
+                    Text("All recent samples").tag(UUID?.none)
+                    ForEach(store.devices.filter(\.hasAnyBattery)) { device in
+                        Text(device.name).tag(Optional(device.id))
+                    }
+                }
+
+                if selectedSamples.isEmpty {
+                    ContentUnavailableView("No history yet", systemImage: "chart.xyaxis.line", description: Text("AirMate will build battery history while it runs."))
+                        .frame(height: 120)
+                } else {
+                    Chart(selectedSamples) { sample in
+                        LineMark(
+                            x: .value("Time", sample.date),
+                            y: .value("Battery", sample.level)
+                        )
+                        .interpolationMethod(.catmullRom)
+                        PointMark(
+                            x: .value("Time", sample.date),
+                            y: .value("Battery", sample.level)
+                        )
+                        .symbolSize(12)
+                    }
+                    .chartYScale(domain: 0...100)
+                    .frame(height: 160)
+                }
             }
 
             Section("Audio") {
