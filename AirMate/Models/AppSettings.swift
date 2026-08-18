@@ -1,8 +1,7 @@
+#if os(macOS)
 import Combine
 import Foundation
-#if canImport(ServiceManagement)
 import ServiceManagement
-#endif
 
 @MainActor
 final class AppSettings: ObservableObject {
@@ -13,12 +12,7 @@ final class AppSettings: ObservableObject {
     @Published var batteryHistoryEnabled: Bool { didSet { save(batteryHistoryEnabled, "batteryHistoryEnabled") } }
     @Published var nearbyMacsEnabled: Bool { didSet { save(nearbyMacsEnabled, "nearbyMacsEnabled") } }
     @Published var showSignalStrength: Bool { didSet { save(showSignalStrength, "showSignalStrength") } }
-    @Published var launchAtLogin: Bool {
-        didSet {
-            save(launchAtLogin, "launchAtLogin")
-            updateLoginItem()
-        }
-    }
+    @Published var launchAtLogin: Bool { didSet { save(launchAtLogin, "launchAtLogin"); updateLoginItem() } }
 
     init() {
         let defaults = UserDefaults.standard
@@ -33,21 +27,15 @@ final class AppSettings: ObservableObject {
         launchAtLogin = defaults.object(forKey: "launchAtLogin") as? Bool ?? false
     }
 
-    private func save(_ value: Any, _ key: String) {
-        UserDefaults.standard.set(value, forKey: key)
-    }
-
+    private func save(_ value: Any, _ key: String) { UserDefaults.standard.set(value, forKey: key) }
     private func updateLoginItem() {
-#if os(macOS) && canImport(ServiceManagement)
         do {
             if launchAtLogin {
                 if SMAppService.mainApp.status != .enabled { try SMAppService.mainApp.register() }
             } else if SMAppService.mainApp.status == .enabled {
                 try SMAppService.mainApp.unregister()
             }
-        } catch {
-            // Keep the user's preference; macOS may require the user to approve the login item.
-        }
-#endif
+        } catch { }
     }
 }
+#endif
