@@ -47,6 +47,7 @@ struct SettingsView: View {
             }
 
             Section("Automation") {
+                Toggle("Launch AirMate at login", isOn: $settings.launchAtLogin)
                 Text("AirMate exposes a Refresh AirMate Devices action to the Shortcuts app.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -62,5 +63,8 @@ struct SettingsView: View {
         .formStyle(.grouped)
         .padding()
         .task { audio.start() }
+        .onChange(of: settings.nearbyMacsEnabled) { _, enabled in
+            store.setNearbyMacsEnabled(enabled)
+        }
     }
 }
