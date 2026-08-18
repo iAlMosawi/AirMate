@@ -23,10 +23,11 @@
     <key>NSBluetoothAlwaysUsageDescription</key>
     <string>AirMate uses Bluetooth to discover nearby devices and show their connection and battery information.</string>
     <key>NSLocalNetworkUsageDescription</key>
-    <string>AirMate uses your local network to discover your other Macs and exchange AirMate device status.</string>
+    <string>AirMate uses your local network to discover your other Macs and receive battery status from your AirMate mobile companions.</string>
     <key>NSBonjourServices</key>
     <array>
         <string>_airmate._tcp</string>
+        <string>_airmate-mobile._tcp</string>
     </array>
 </dict>
 </plist>
