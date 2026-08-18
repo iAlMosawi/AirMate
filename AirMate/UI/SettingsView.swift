@@ -7,10 +7,6 @@ struct SettingsView: View {
     @StateObject private var audio = AudioDeviceService()
     @State private var selectedDeviceID: UUID?
 
-    private var historyDevices: [AirMateDevice] {
-        store.devices.filter { !$0.hasAnyBattery ? store.history.samples.contains(where: { $0.deviceID == $0.deviceID }) : true }
-    }
-
     private var selectedSamples: [BatteryHistorySample] {
         guard let selectedDeviceID else { return Array(store.history.samples.suffix(120)) }
         return Array(store.history.samples.filter { $0.deviceID == selectedDeviceID }.suffix(240))
@@ -42,15 +38,19 @@ struct SettingsView: View {
 
             Section("Battery Statistics") {
                 Picker("Device", selection: $selectedDeviceID) {
-                    Text("All recent samples").tag(UUID?.none)
-                    ForEach(store.devices.filter(\.hasAnyBattery)) { device in
-                        Text(device.name).tag(Optional(device.id))
+                    Text("All recent samples").tag(nil as UUID?)
+                    ForEach(store.devices.filter { $0.hasAnyBattery }) { device in
+                        Text(device.name).tag(device.id as UUID?)
                     }
                 }
 
                 if selectedSamples.isEmpty {
-                    ContentUnavailableView("No history yet", systemImage: "chart.xyaxis.line", description: Text("AirMate will build battery history while it runs."))
-                        .frame(height: 120)
+                    ContentUnavailableView(
+                        "No history yet",
+                        systemImage: "chart.xyaxis.line",
+                        description: Text("AirMate will build battery history while it runs.")
+                    )
+                    .frame(height: 120)
                 } else {
                     Chart(selectedSamples) { sample in
                         LineMark(
