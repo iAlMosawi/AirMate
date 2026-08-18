@@ -17,6 +17,8 @@ struct SettingsView: View {
         Form {
             Section("Devices") {
                 Toggle("Show generic nearby Bluetooth devices", isOn: $settings.showNearbyBluetooth)
+                Toggle("Hide disconnected devices", isOn: $settings.hideDisconnectedDevices)
+                Toggle("Show only devices with battery data", isOn: $settings.showBatteryDevicesOnly)
                 Toggle("Show connection HUD", isOn: $settings.showConnectionHUD)
                 Toggle("Show signal strength", isOn: $settings.showSignalStrength)
                 Toggle("Discover nearby Macs running AirMate", isOn: $settings.nearbyMacsEnabled)
