@@ -1,6 +1,8 @@
 import Combine
 import Foundation
+#if canImport(ServiceManagement)
 import ServiceManagement
+#endif
 
 @MainActor
 final class AppSettings: ObservableObject {
@@ -36,6 +38,7 @@ final class AppSettings: ObservableObject {
     }
 
     private func updateLoginItem() {
+#if os(macOS) && canImport(ServiceManagement)
         do {
             if launchAtLogin {
                 if SMAppService.mainApp.status != .enabled { try SMAppService.mainApp.register() }
@@ -45,5 +48,6 @@ final class AppSettings: ObservableObject {
         } catch {
             // Keep the user's preference; macOS may require the user to approve the login item.
         }
+#endif
     }
 }
