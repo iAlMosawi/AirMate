@@ -7,11 +7,7 @@ struct MenuBarView: View {
     @EnvironmentObject private var settings: AppSettings
 
     private var visibleDevices: [AirMateDevice] {
-        var filtered = settings.showNearbyBluetooth ? store.devices : store.devices.filter { $0.kind != .bluetooth }
-
-        if settings.hideDisconnectedDevices {
-            filtered = filtered.filter { $0.connectionState != .disconnected }
-        }
+        var filtered = store.devices.filter { $0.connectionState == .connected }
 
         if settings.showBatteryDevicesOnly {
             filtered = filtered.filter(\.hasAnyBattery)
@@ -21,7 +17,8 @@ struct MenuBarView: View {
             let leftFavorite = settings.isFavorite(lhs.id)
             let rightFavorite = settings.isFavorite(rhs.id)
             if leftFavorite != rightFavorite { return leftFavorite && !rightFavorite }
-            if lhs.connectionState != rhs.connectionState { return lhs.connectionState == .connected }
+            if lhs.kind == .mac && rhs.kind != .mac { return true }
+            if lhs.kind != .mac && rhs.kind == .mac { return false }
             return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
         }
     }
@@ -40,7 +37,7 @@ struct MenuBarView: View {
 
             if visibleDevices.isEmpty {
                 ContentUnavailableView(
-                    "No matching devices",
+                    "No connected devices",
                     systemImage: "dot.radiowaves.left.and.right",
                     description: Text(emptyStateMessage)
                 )
@@ -64,10 +61,10 @@ struct MenuBarView: View {
     }
 
     private var emptyStateMessage: String {
-        if settings.showBatteryDevicesOnly || settings.hideDisconnectedDevices {
-            return "No devices match the current visibility filters. Adjust them in Settings or refresh discovery."
+        if settings.showBatteryDevicesOnly {
+            return "No connected devices with battery information are currently available. Turn off Battery devices only in Settings to see all connected devices."
         }
-        return "AirMate is scanning for nearby devices. Keep Bluetooth enabled and open your AirPods case nearby."
+        return "AirMate now lists connected devices only. Connect a Bluetooth accessory in macOS Settings or start AirMate on another Mac, iPhone or iPad on this network."
     }
 
     private var header: some View {
@@ -76,7 +73,7 @@ struct MenuBarView: View {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .fill(.quaternary)
                     .frame(width: 38, height: 38)
-                Image(systemName: "airpodspro")
+                Image(systemName: "dot.radiowaves.left.and.right")
                     .font(.system(size: 19, weight: .semibold))
             }
 
@@ -85,6 +82,7 @@ struct MenuBarView: View {
                     .font(.headline)
                 HStack(spacing: 5) {
                     Circle()
+                        .fill(.green)
                         .frame(width: 6, height: 6)
                     Text(store.bluetoothStateText)
                         .font(.caption)
@@ -100,14 +98,14 @@ struct MenuBarView: View {
                 Image(systemName: "arrow.clockwise")
             }
             .buttonStyle(.plain)
-            .help("Refresh devices")
+            .help("Refresh connected devices")
         }
         .padding(12)
     }
 
     private var summary: some View {
         HStack(spacing: 12) {
-            Label("\(visibleDevices.count) devices", systemImage: "rectangle.stack")
+            Label("\(visibleDevices.count) connected", systemImage: "link.circle")
             Spacer()
             if !lowBatteryDevices.isEmpty {
                 Label("\(lowBatteryDevices.count) low", systemImage: "battery.25percent")
