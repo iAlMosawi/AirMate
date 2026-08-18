@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppIntents
 import SwiftUI
 
@@ -38,3 +39,4 @@ struct RefreshAirMateIntent: AppIntent {
         .result(dialog: "AirMate is ready.")
     }
 }
+#endif
