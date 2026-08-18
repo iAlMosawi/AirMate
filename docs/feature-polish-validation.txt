@@ -1,0 +1,1 @@
+Temporary CI marker for AirMate 0.6 feature polish validation.
