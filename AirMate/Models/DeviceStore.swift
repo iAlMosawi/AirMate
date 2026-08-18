@@ -15,6 +15,7 @@ final class DeviceStore: ObservableObject {
     let hidMonitor = HIDAccessoryMonitor()
     let history = BatteryHistoryStore()
     let nearbyMacs = NearbyDeviceExchange()
+    let mobileBridge = MobileDeviceBridge()
     let notifications = BatteryNotificationService()
 
     private var cancellables = Set<AnyCancellable>()
@@ -27,16 +28,17 @@ final class DeviceStore: ObservableObject {
         Publishers.CombineLatest4(
             bluetoothScanner.$discovered,
             macBatteryMonitor.$level.combineLatest(macBatteryMonitor.$isCharging),
-            hidMonitor.$devices,
+            hidMonitor.$devices.combineLatest(mobileBridge.$devices),
             nearbyMacs.$peers
         )
         .receive(on: RunLoop.main)
-        .sink { [weak self] discovered, macState, hid, peers in
+        .sink { [weak self] discovered, macState, accessoryState, peers in
             self?.rebuildDevices(
                 discovered: discovered,
                 macLevel: macState.0,
                 macCharging: macState.1,
-                hid: hid,
+                hid: accessoryState.0,
+                mobile: accessoryState.1,
                 peers: peers
             )
         }
@@ -66,12 +68,14 @@ final class DeviceStore: ObservableObject {
         bluetoothScanner.start()
         macBatteryMonitor.start()
         hidMonitor.start()
+        mobileBridge.start()
         if settings.nearbyMacsEnabled { nearbyMacs.start() }
 
         pruneTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.bluetoothScanner.prune()
                 self?.hidMonitor.refresh()
+                self?.mobileBridge.prune()
                 self?.nearbyMacs.refreshPeers()
             }
         }
@@ -81,6 +85,7 @@ final class DeviceStore: ObservableObject {
             macLevel: macBatteryMonitor.level,
             macCharging: macBatteryMonitor.isCharging,
             hid: hidMonitor.devices,
+            mobile: mobileBridge.devices,
             peers: nearbyMacs.peers
         )
     }
@@ -88,6 +93,7 @@ final class DeviceStore: ObservableObject {
     func refresh() {
         macBatteryMonitor.refresh()
         hidMonitor.refresh()
+        mobileBridge.prune()
         nearbyMacs.refreshPeers()
         bluetoothScanner.stop()
         bluetoothScanner.start()
@@ -107,6 +113,7 @@ final class DeviceStore: ObservableObject {
         macLevel: Int?,
         macCharging: Bool,
         hid: [AirMateDevice],
+        mobile: [AirMateDevice],
         peers: [AirMateDevice]
     ) {
         let previous = Dictionary(uniqueKeysWithValues: devices.map { ($0.id, $0) })
@@ -124,6 +131,7 @@ final class DeviceStore: ObservableObject {
 
         var seen = Set<UUID>([localMacID])
         for device in hid where seen.insert(device.id).inserted { localResult.append(device) }
+        for device in mobile where seen.insert(device.id).inserted { localResult.append(device) }
 
         let nearby = discovered.values.sorted {
             if $0.kind == .airPods && $1.kind != .airPods { return true }
@@ -189,8 +197,57 @@ final class DeviceHUDController {
         dismissTask = Task { [weak panel] in
             try? await Task.sleep(for: .seconds(4))
             guard !Task.isCancelled else { return }
-            await MainActor.run { panel?.orderOut(nil) }
+            panel?.orderOut(nil)
         }
+    }
+}
+
+@MainActor
+final class MobileDeviceBridge: ObservableObject {
+    @Published private(set) var devices: [AirMateDevice] = []
+    private var byID: [UUID: AirMateDevice] = [:]
+    private var listener: NWListener?
+    private let queue = DispatchQueue(label: "com.almosawi.airmate.mobile", qos: .utility)
+
+    func start() {
+        guard listener == nil else { return }
+        do {
+            let listener = try NWListener(using: .tcp, on: .any)
+            listener.service = NWListener.Service(name: Host.current().localizedName ?? "AirMate Mac", type: "_airmate-mobile._tcp")
+            listener.newConnectionHandler = { [weak self] connection in self?.receive(on: connection) }
+            listener.start(queue: queue)
+            self.listener = listener
+        } catch {
+            listener = nil
+        }
+    }
+
+    func prune(olderThan age: TimeInterval = 120) {
+        let cutoff = Date().addingTimeInterval(-age)
+        byID = byID.filter { $0.value.lastSeen >= cutoff }
+        devices = byID.values.sorted { $0.name < $1.name }
+    }
+
+    private nonisolated func receive(on connection: NWConnection) {
+        connection.start(queue: queue)
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 262_144) { [weak self] data, _, _, _ in
+            defer { connection.cancel() }
+            guard let data else { return }
+            if let device = try? JSONDecoder().decode(AirMateDevice.self, from: data) {
+                Task { @MainActor in self?.store(device) }
+            } else if let list = try? JSONDecoder().decode([AirMateDevice].self, from: data) {
+                Task { @MainActor in list.forEach { self?.store($0) } }
+            }
+        }
+    }
+
+    private func store(_ incoming: AirMateDevice) {
+        var device = incoming
+        device.source = .pairedMobile
+        device.connectionState = .connected
+        device.lastSeen = .now
+        byID[device.id] = device
+        devices = byID.values.sorted { $0.name < $1.name }
     }
 }
 
@@ -268,11 +325,13 @@ final class NearbyDeviceExchange: ObservableObject {
     private func requestSnapshot(peerName: String, endpoint: NWEndpoint) {
         let connection = NWConnection(to: endpoint, using: .tcp)
         connection.stateUpdateHandler = { [weak self, weak connection] state in
-            guard state == .ready, let connection else { return }
-            connection.receive(minimumIncompleteLength: 1, maximumLength: 1_048_576) { data, _, _, _ in
-                defer { connection.cancel() }
-                guard let data, let decoded = try? JSONDecoder().decode([AirMateDevice].self, from: data) else { return }
-                Task { @MainActor in self?.storeSnapshot(decoded, peerName: peerName) }
+            guard let connection else { return }
+            if case .ready = state {
+                connection.receive(minimumIncompleteLength: 1, maximumLength: 1_048_576) { data, _, _, _ in
+                    defer { connection.cancel() }
+                    guard let data, let decoded = try? JSONDecoder().decode([AirMateDevice].self, from: data) else { return }
+                    Task { @MainActor in self?.storeSnapshot(decoded, peerName: peerName) }
+                }
             }
         }
         connection.start(queue: queue)
@@ -280,14 +339,8 @@ final class NearbyDeviceExchange: ObservableObject {
 
     private func storeSnapshot(_ snapshot: [AirMateDevice], peerName: String) {
         let converted = snapshot.map { original -> AirMateDevice in
-            var device = original
-            device.source = .nearbyMac
-            device.metadata["nearbyMac"] = peerName
-            if device.kind == .mac {
-                device.kind = .nearbyMac
-                device.name = peerName
-                device.connectionState = .connected
-                device = AirMateDevice(
+            if original.kind == .mac {
+                return AirMateDevice(
                     id: peerUUID(peerName),
                     name: peerName,
                     kind: .nearbyMac,
@@ -300,6 +353,9 @@ final class NearbyDeviceExchange: ObservableObject {
                     metadata: ["nearbyMac": peerName]
                 )
             }
+            var device = original
+            device.source = .nearbyMac
+            device.metadata["nearbyMac"] = peerName
             return device
         }
         peerSnapshots[peerName] = converted
