@@ -7,44 +7,53 @@ on:
     branches: [main]
 
 jobs:
-  macos:
+  mac:
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
-      - run: xcodebuild -version
-      - name: Build macOS app and widget
+      - name: Xcode version
+        run: xcodebuild -version
+      - name: Build Mac + Widget
+        id: build_mac
+        shell: bash
         run: |
-          xcodebuild \
-            -project AirMate.xcodeproj \
-            -target AirMate \
-            -configuration Debug \
-            CODE_SIGNING_ALLOWED=NO \
-            build
+          set -o pipefail
+          xcodebuild -project AirMate.xcodeproj -target AirMate -configuration Debug CODE_SIGNING_ALLOWED=NO build 2>&1 | tee mac-build.log
+      - name: Upload Mac build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mac-build-log
+          path: mac-build.log
 
-  ios:
+  mobile:
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
       - name: Build iPhone/iPad companion
+        shell: bash
         run: |
-          xcodebuild \
-            -project AirMateMobile.xcodeproj \
-            -target AirMateMobile \
-            -configuration Debug \
-            -sdk iphonesimulator \
-            CODE_SIGNING_ALLOWED=NO \
-            build
+          set -o pipefail
+          xcodebuild -project AirMateMobile.xcodeproj -target AirMateMobile -configuration Debug -sdk iphonesimulator CODE_SIGNING_ALLOWED=NO build 2>&1 | tee mobile-build.log
+      - name: Upload Mobile build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-build-log
+          path: mobile-build.log
 
-  watchos:
+  watch:
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
-      - name: Build Apple Watch companion
+      - name: Build Watch companion
+        shell: bash
         run: |
-          xcodebuild \
-            -project AirMateWatch.xcodeproj \
-            -target AirMateWatch \
-            -configuration Debug \
-            -sdk watchsimulator \
-            CODE_SIGNING_ALLOWED=NO \
-            build
+          set -o pipefail
+          xcodebuild -project AirMateWatch.xcodeproj -target AirMateWatch -configuration Debug -sdk watchsimulator CODE_SIGNING_ALLOWED=NO build 2>&1 | tee watch-build.log
+      - name: Upload Watch build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: watch-build-log
+          path: watch-build.log
