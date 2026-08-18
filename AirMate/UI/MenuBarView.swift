@@ -7,7 +7,16 @@ struct MenuBarView: View {
     @EnvironmentObject private var settings: AppSettings
 
     private var visibleDevices: [AirMateDevice] {
-        let filtered = settings.showNearbyBluetooth ? store.devices : store.devices.filter { $0.kind != .bluetooth }
+        var filtered = settings.showNearbyBluetooth ? store.devices : store.devices.filter { $0.kind != .bluetooth }
+
+        if settings.hideDisconnectedDevices {
+            filtered = filtered.filter { $0.connectionState != .disconnected }
+        }
+
+        if settings.showBatteryDevicesOnly {
+            filtered = filtered.filter(\.hasAnyBattery)
+        }
+
         return filtered.sorted { lhs, rhs in
             let leftFavorite = settings.isFavorite(lhs.id)
             let rightFavorite = settings.isFavorite(rhs.id)
@@ -31,9 +40,9 @@ struct MenuBarView: View {
 
             if visibleDevices.isEmpty {
                 ContentUnavailableView(
-                    "No devices yet",
+                    "No matching devices",
                     systemImage: "dot.radiowaves.left.and.right",
-                    description: Text("AirMate is scanning for nearby devices. Keep Bluetooth enabled and open your AirPods case nearby.")
+                    description: Text(emptyStateMessage)
                 )
                 .frame(height: 220)
             } else {
@@ -52,6 +61,13 @@ struct MenuBarView: View {
             footer
         }
         .background(.regularMaterial)
+    }
+
+    private var emptyStateMessage: String {
+        if settings.showBatteryDevicesOnly || settings.hideDisconnectedDevices {
+            return "No devices match the current visibility filters. Adjust them in Settings or refresh discovery."
+        }
+        return "AirMate is scanning for nearby devices. Keep Bluetooth enabled and open your AirPods case nearby."
     }
 
     private var header: some View {
