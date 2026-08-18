@@ -4,14 +4,23 @@ AirMate is a clean-room, native Apple-platform companion project inspired by the
 
 ## One Xcode project
 
-Open only `AirMate.xcodeproj`. It now contains all AirMate targets:
+Open only `AirMate.xcodeproj`. It contains all AirMate targets:
 
 - `AirMate` — macOS 26+ menu-bar app and HUD
 - `AirMateWidget` — macOS WidgetKit extension
-- `AirMateMobile` — iPhone/iPad 26+ battery companion
-- `AirMateWatch` — watchOS 26+ battery companion
+- `AirMateMobile` — iPhone/iPad 26+ companion
+- `AirMateMobileWidget` — iPhone/iPad WidgetKit extension
+- `AirMateWatch` — watchOS 26+ companion
 
 Primary macOS bundle ID: `com.almosawi.airmate`
+
+The repository includes three canonical shared schemes:
+
+- `AirMate` → macOS only
+- `AirMateMobile` → iPhone/iPad only
+- `AirMateWatch` → watchOS only
+
+Using the shared schemes prevents Xcode from accidentally building a macOS resource catalog for iOS, or a Watch target for an iPhone destination.
 
 ## Implemented beta features
 
@@ -20,27 +29,39 @@ Primary macOS bundle ID: `com.almosawi.airmate`
 - Best-effort AirPods/Beats Apple manufacturer-advertisement decoder
 - Left/right/case battery model and charging states
 - Mac battery monitoring with IOKit
+- CoreBluetooth BLE discovery
+- IOBluetooth connected classic-Bluetooth discovery
 - Magic Keyboard, Mouse and Trackpad discovery through HID
-- iPhone/iPad battery reporting through the AirMate Mobile companion
+- iPhone/iPad battery reporting through the AirMate companion
 - Apple Watch battery reporting through the AirMate Watch companion
 - Nearby Mac discovery and local-network device snapshot exchange
+- iPhone/iPad ecosystem view of devices reported by AirMate Macs
+- Favorites/pinning and device filtering
 - Low-battery notifications
 - Persistent battery history
 - Battery history charts with Swift Charts
 - CoreAudio output-device discovery and switching
 - Launch at login
 - Shortcuts/App Intents entry point
-- WidgetKit extension
+- macOS and iPhone/iPad WidgetKit extensions
 - Swift 6 / Xcode 27 project structure
-- GitHub Actions builds for macOS, iOS and watchOS targets from the same Xcode project
+- GitHub Actions builds for macOS, iOS and watchOS from the same Xcode project
+
+## Signing
+
+All embedded extensions must use the same Apple Development team/certificate as their parent app.
+
+For local Mac testing, select the same Team under **Signing & Capabilities** for both `AirMate` and `AirMateWidget`.
+
+For iPhone/iPad testing, select the same Team for `AirMateMobile` and `AirMateMobileWidget`.
+
+The repository intentionally does not hard-code a personal Apple Developer Team ID because it is account-specific.
 
 ## Important compatibility notes
 
 Apple exposes normal iPhone/iPad and Apple Watch battery monitoring APIs to their respective apps, so AirMate uses companion apps to report those battery values to the Mac over the local network.
 
-Detailed AirPods proximity-pairing advertisement formats, closed-case battery state, some listening-mode controls, and several seamless Apple ecosystem behaviors are not documented as stable public APIs. AirMate therefore keeps AirPods advertisement decoding in an isolated compatibility layer. The first hardware test cycle is expected to calibrate that parser against actual AirPods/Beats models and macOS 26/27 behavior.
-
-The WidgetKit target is included in this beta. Live cross-process widget snapshots will be enabled after the signing team/App Group is selected in Xcode so the app and widget can share a signed container.
+Detailed AirPods proximity-pairing advertisement formats, closed-case battery state, some listening-mode controls, and several seamless Apple ecosystem behaviors are not documented as stable public APIs. AirMate therefore keeps AirPods advertisement decoding in an isolated compatibility layer. Real-device testing is required to calibrate that parser against actual AirPods/Beats models and current macOS behavior.
 
 ## Build
 
@@ -58,9 +79,11 @@ cd AirMate
 open AirMate.xcodeproj
 ```
 
-Inside Xcode, choose the target/scheme you want to run: `AirMate`, `AirMateMobile`, or `AirMateWatch`. The `AirMateWidget` extension is built with the Mac app.
+Run the appropriate shared scheme:
 
-Choose your Apple Development team in Signing & Capabilities before installing the apps on physical devices.
+- `AirMate` → **My Mac**
+- `AirMateMobile` → **iPhone/iPad or Simulator**
+- `AirMateWatch` → **Apple Watch or Watch Simulator**
 
 ## Local network services
 
@@ -75,6 +98,6 @@ The current beta does not require an AirMate cloud service. Device discovery, ba
 
 ## Status
 
-Version: **0.5.0 beta**
+Version: **0.6.0 beta**
 
-The unified Xcode project passes Xcode 27 CI for the Mac + Widget, iPhone/iPad, and Apple Watch targets. Real-device testing remains necessary for Bluetooth advertisement calibration, device-specific compatibility and final UI/behavior polish.
+The unified Xcode project is validated in Xcode 27 CI using the same shared schemes used for local development: Mac + Widget, iPhone/iPad + Widget, and Apple Watch. Real-device testing remains necessary for Bluetooth advertisement calibration, code signing/provisioning, device-specific compatibility and final UI/behavior polish.
