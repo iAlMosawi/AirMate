@@ -1,3 +1,4 @@
+@preconcurrency import CloudKit
 @preconcurrency import Network
 import AVFAudio
 import SwiftUI
@@ -56,6 +57,8 @@ final class MobileReporter: ObservableObject {
     @Published private(set) var connectedBluetoothAudio: [MobileDevicePayload] = []
     @Published private(set) var lastSent: Date?
     @Published private(set) var lastEcosystemRefresh: Date?
+    @Published private(set) var cloudStatusText = "Starting…"
+    @Published private(set) var lastCloudSync: Date?
     @Published private(set) var isSearching = true
 
     private var bridgeBrowser: NWBrowser?
@@ -64,9 +67,14 @@ final class MobileReporter: ObservableObject {
     private var bridgeEndpoints: [String: NWEndpoint] = [:]
     private var ecosystemEndpoints: [String: NWEndpoint] = [:]
     private var ecosystemSnapshots: [String: [MobileDevicePayload]] = [:]
+    private var cloudPeerNames = Set<String>()
     private var timer: Timer?
     private var observers: [NSObjectProtocol] = []
     private let queue = DispatchQueue(label: "com.almosawi.airmate.mobile.reporter", qos: .utility)
+    private let cloudContainer = CKContainer(identifier: "iCloud.com.almosawi.airmate")
+    private let cloudRecordType = "AirMateSnapshot"
+    private let cloudLiveWindow: TimeInterval = 180
+    private var cloudSyncTask: Task<Void, Never>?
 
     private var stableID: UUID {
         let key = "AirMateMobileDeviceID"
@@ -78,6 +86,10 @@ final class MobileReporter: ObservableObject {
 
     private var peerServiceName: String {
         "\(UIDevice.current.name) • \(stableID.uuidString.prefix(4))"
+    }
+
+    private var cloudRecordID: CKRecord.ID {
+        CKRecord.ID(recordName: "snapshot-\(stableID.uuidString)")
     }
 
     var deviceName: String { UIDevice.current.name }
@@ -99,6 +111,7 @@ final class MobileReporter: ObservableObject {
     func start() {
         if bridgeBrowser != nil {
             refreshLocalState()
+            scheduleCloudSync(after: .zero)
             return
         }
 
@@ -118,6 +131,7 @@ final class MobileReporter: ObservableObject {
         startBridgeBrowser()
         startEcosystemListener()
         startEcosystemBrowser()
+        scheduleCloudSync(after: .zero)
 
         timer = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { [weak self] _ in
             Task { @MainActor in
@@ -146,6 +160,7 @@ final class MobileReporter: ObservableObject {
         if !bridgeEndpoints.isEmpty { lastSent = .now }
         ecosystemSnapshots[peerServiceName] = payloads
         rebuildEcosystemItems()
+        scheduleCloudSync(after: .seconds(2))
         WidgetCenter.shared.reloadTimelines(ofKind: "AirMateMobileBatteryWidget")
     }
 
@@ -155,6 +170,7 @@ final class MobileReporter: ObservableObject {
         for (name, endpoint) in ecosystemEndpoints { requestSnapshot(peerName: name, endpoint: endpoint) }
         rebuildEcosystemItems()
         lastEcosystemRefresh = .now
+        scheduleCloudSync(after: .zero)
     }
 
     func refreshAll() {
@@ -227,7 +243,9 @@ final class MobileReporter: ObservableObject {
                     }
                 }
                 self.ecosystemEndpoints = map
-                self.ecosystemSnapshots = self.ecosystemSnapshots.filter { key, _ in key == self.peerServiceName || map[key] != nil }
+                self.ecosystemSnapshots = self.ecosystemSnapshots.filter { key, _ in
+                    key == self.peerServiceName || map[key] != nil || key.hasPrefix("Cloud • ")
+                }
                 self.updatePeerNames()
                 self.refreshEcosystem()
             }
@@ -237,7 +255,7 @@ final class MobileReporter: ObservableObject {
     }
 
     private func updatePeerNames() {
-        discoveredPeers = Array(Set(bridgeEndpoints.keys).union(ecosystemEndpoints.keys)).sorted()
+        discoveredPeers = Array(Set(bridgeEndpoints.keys).union(ecosystemEndpoints.keys).union(cloudPeerNames)).sorted()
     }
 
     private func requestSnapshot(peerName: String, endpoint: NWEndpoint) {
@@ -265,14 +283,25 @@ final class MobileReporter: ObservableObject {
         for host in ecosystemSnapshots.keys.sorted() {
             for device in ecosystemSnapshots[host] ?? [] where device.connectionState == .connected {
                 let key = "\(device.kind.rawValue)|\(device.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())"
-                if deduplicated[key] == nil || host == peerServiceName {
-                    deduplicated[key] = EcosystemItem(host: host, device: device)
+                let candidate = EcosystemItem(host: host, device: device)
+                if let existing = deduplicated[key] {
+                    if sourcePriority(host) > sourcePriority(existing.host) {
+                        deduplicated[key] = candidate
+                    }
+                } else {
+                    deduplicated[key] = candidate
                 }
             }
         }
         ecosystemItems = deduplicated.values.sorted { lhs, rhs in
             lhs.device.name.localizedCaseInsensitiveCompare(rhs.device.name) == .orderedAscending
         }
+    }
+
+    private func sourcePriority(_ host: String) -> Int {
+        if host == peerServiceName { return 3 }
+        if host.hasPrefix("Cloud • ") { return 1 }
+        return 2
     }
 
     private func updateAndSend() {
@@ -351,6 +380,103 @@ final class MobileReporter: ObservableObject {
         }
     }
 
+    private func scheduleCloudSync(after delay: Duration) {
+        cloudSyncTask?.cancel()
+        cloudSyncTask = Task { [weak self] in
+            if delay != .zero { try? await Task.sleep(for: delay) }
+            guard !Task.isCancelled else { return }
+            await self?.syncCloudNow()
+        }
+    }
+
+    private func syncCloudNow() async {
+        do {
+            let account = try await cloudContainer.accountStatus()
+            guard account == .available else {
+                cloudStatusText = "iCloud unavailable"
+                clearCloudSnapshots()
+                return
+            }
+
+            cloudStatusText = "Syncing…"
+            let database = cloudContainer.privateCloudDatabase
+            try await uploadCloudSnapshot(to: database)
+            try await fetchCloudSnapshots(from: database)
+            lastCloudSync = .now
+            cloudStatusText = cloudPeerNames.isEmpty ? "Cloud connected" : "Cloud connected • \(cloudPeerNames.count) peers"
+        } catch {
+            cloudStatusText = "Cloud sync unavailable"
+        }
+    }
+
+    private func uploadCloudSnapshot(to database: CKDatabase) async throws {
+        let payloads = makeLocalPayloads().filter { $0.connectionState == .connected }
+        guard let data = try? JSONEncoder().encode(payloads) else { return }
+
+        let record: CKRecord
+        do {
+            record = try await database.record(for: cloudRecordID)
+        } catch let error as CKError where error.code == .unknownItem {
+            record = CKRecord(recordType: cloudRecordType, recordID: cloudRecordID)
+        }
+
+        record["hostName"] = peerServiceName as CKRecordValue
+        record["platform"] = (UIDevice.current.userInterfaceIdiom == .pad ? "iPadOS" : "iOS") as CKRecordValue
+        record["updatedAt"] = Date() as CKRecordValue
+        record["payload"] = data as CKRecordValue
+        _ = try await database.save(record)
+    }
+
+    private func fetchCloudSnapshots(from database: CKDatabase) async throws {
+        let query = CKQuery(recordType: cloudRecordType, predicate: NSPredicate(value: true))
+        let response = try await database.records(
+            matching: query,
+            inZoneWith: nil,
+            desiredKeys: ["hostName", "platform", "updatedAt", "payload"],
+            resultsLimit: 100
+        )
+
+        var fresh: [String: [MobileDevicePayload]] = [:]
+        var names = Set<String>()
+        let now = Date()
+
+        for (id, result) in response.matchResults where id != cloudRecordID {
+            guard case .success(let record) = result,
+                  let data = record["payload"] as? Data,
+                  let decoded = try? JSONDecoder().decode([MobileDevicePayload].self, from: data) else { continue }
+
+            let updatedAt = (record["updatedAt"] as? Date) ?? record.modificationDate ?? .distantPast
+            guard now.timeIntervalSince(updatedAt) <= cloudLiveWindow else { continue }
+            let remoteHost = (record["hostName"] as? String) ?? "AirMate Device"
+            names.insert(remoteHost)
+
+            let converted = decoded
+                .filter { $0.connectionState == .connected }
+                .map { original -> MobileDevicePayload in
+                    var device = original
+                    device.connectionState = .connected
+                    device.lastSeen = updatedAt
+                    device.metadata["cloudPeer"] = remoteHost
+                    device.metadata["sync"] = "CloudKit"
+                    return device
+                }
+            fresh["Cloud • \(remoteHost)"] = converted
+        }
+
+        ecosystemSnapshots = ecosystemSnapshots.filter { !$0.key.hasPrefix("Cloud • ") }
+        for (key, value) in fresh { ecosystemSnapshots[key] = value }
+        cloudPeerNames = names
+        updatePeerNames()
+        rebuildEcosystemItems()
+    }
+
+    private func clearCloudSnapshots() {
+        ecosystemSnapshots = ecosystemSnapshots.filter { !$0.key.hasPrefix("Cloud • ") }
+        cloudPeerNames = []
+        updatePeerNames()
+        rebuildEcosystemItems()
+    }
+
     private func stableUUID(for value: String) -> UUID {
         var bytes = [UInt8](repeating: 0, count: 16)
         for (index, byte) in value.utf8.enumerated() {
@@ -395,12 +521,12 @@ struct MobileOverviewView: View {
                 .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
 
                 HStack(spacing: 12) {
-                    StatusTile(title: "AirMate Link", value: reporter.hasPeer ? "Connected" : (reporter.isSearching ? "Searching" : "Not Found"), systemImage: reporter.hasPeer ? "link.circle.fill" : "link.circle")
+                    StatusTile(title: "AirMate Link", value: reporter.hasPeer ? "Connected" : (reporter.isSearching ? "Searching" : "Cloud Ready"), systemImage: reporter.hasPeer ? "link.circle.fill" : "icloud")
                     StatusTile(title: "Ecosystem", value: "\(reporter.connectedEcosystemCount) Devices", systemImage: "rectangle.3.group")
                 }
                 HStack(spacing: 12) {
                     StatusTile(title: "Peers", value: "\(reporter.peerCount)", systemImage: "network")
-                    StatusTile(title: "Bluetooth Audio", value: "\(reporter.connectedBluetoothAudio.count)", systemImage: "wave.3.right.circle")
+                    StatusTile(title: "Cloud", value: reporter.cloudStatusText, systemImage: "icloud.fill")
                 }
 
                 Button { reporter.refreshAll() } label: {
@@ -410,8 +536,8 @@ struct MobileOverviewView: View {
                 .controlSize(.large)
 
                 VStack(alignment: .leading, spacing: 8) {
-                    Label("Connected-only ecosystem", systemImage: "checkmark.circle.fill").font(.headline)
-                    Text("AirMate shares connected Bluetooth accessories and each AirMate device across your local network. Nearby-but-not-connected Bluetooth advertisements are excluded from the Devices list.")
+                    Label("Local + Cloud ecosystem", systemImage: "icloud.and.arrow.up.fill").font(.headline)
+                    Text("AirMate uses Bonjour when peers are on the same LAN and private CloudKit when your Mac, iPhone or iPad are on different Wi-Fi networks or cellular data. Only recently reported connected devices are treated as live.")
                         .font(.subheadline).foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -433,7 +559,7 @@ private struct StatusTile: View {
         VStack(alignment: .leading, spacing: 8) {
             Image(systemName: systemImage).font(.title2).foregroundStyle(.tint)
             Text(title).font(.caption).foregroundStyle(.secondary)
-            Text(value).font(.subheadline.weight(.semibold)).lineLimit(1).minimumScaleFactor(0.72)
+            Text(value).font(.subheadline.weight(.semibold)).lineLimit(2).minimumScaleFactor(0.72)
         }
         .frame(maxWidth: .infinity, minHeight: 100, alignment: .leading)
         .padding(16)
@@ -449,6 +575,7 @@ struct EcosystemDevicesView: View {
             Section {
                 LabeledContent("Connected devices", value: "\(reporter.connectedEcosystemCount)")
                 LabeledContent("AirMate peers", value: "\(reporter.peerCount)")
+                LabeledContent("Cloud sync", value: reporter.cloudStatusText)
                 if let date = reporter.lastEcosystemRefresh {
                     LabeledContent("Updated", value: date.formatted(date: .omitted, time: .shortened))
                 }
@@ -458,7 +585,7 @@ struct EcosystemDevicesView: View {
                 ContentUnavailableView(
                     "No Connected Devices Yet",
                     systemImage: "dot.radiowaves.left.and.right",
-                    description: Text("Run AirMate on your Mac, iPhone and iPad on the same local network. Connected devices reported by any AirMate peer will appear here.")
+                    description: Text("Run AirMate on your Mac, iPhone and iPad. Peers on the same network sync with Bonjour; peers elsewhere sync through your private iCloud database.")
                 )
             } else {
                 Section("Connected Across AirMate") {
@@ -509,14 +636,14 @@ struct NearbyPeersView: View {
         List {
             Section("AirMate Peers") {
                 if reporter.discoveredPeers.isEmpty {
-                    ContentUnavailableView("No AirMate Peer Found", systemImage: "network", description: Text("Keep AirMate running on your Mac, iPhone or iPad and keep them on the same local network."))
+                    ContentUnavailableView("No AirMate Peer Found", systemImage: "network", description: Text("AirMate can still sync through iCloud when your other devices are on another network. Make sure they use the same iCloud account and have AirMate running recently."))
                 } else {
                     ForEach(reporter.discoveredPeers, id: \.self) { peer in
                         HStack(spacing: 14) {
                             Image(systemName: "network").font(.title2).foregroundStyle(.tint)
                             VStack(alignment: .leading) {
                                 Text(peer).font(.headline)
-                                Text("Connected AirMate ecosystem source").font(.caption).foregroundStyle(.secondary)
+                                Text("AirMate ecosystem source").font(.caption).foregroundStyle(.secondary)
                             }
                             Spacer()
                             Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
@@ -545,12 +672,16 @@ struct MobileSettingsView: View {
             Section("AirMate Ecosystem") {
                 LabeledContent("Peers discovered", value: "\(reporter.peerCount)")
                 LabeledContent("Connected devices", value: "\(reporter.connectedEcosystemCount)")
-                Text("AirMate shares snapshots directly between Macs, iPhones and iPads on the same local network. macOS can enumerate its paired/connected Bluetooth devices. iPhone and iPad can contribute connected Bluetooth audio routes that Apple exposes to apps.")
+                LabeledContent("Cloud sync", value: reporter.cloudStatusText)
+                if let date = reporter.lastCloudSync {
+                    LabeledContent("Last cloud sync", value: date.formatted(date: .omitted, time: .shortened))
+                }
+                Text("Bonjour provides fast same-network sync. Private CloudKit provides cross-network sync between your AirMate Macs, iPhones and iPads signed into the same iCloud account.")
                     .font(.subheadline).foregroundStyle(.secondary)
             }
             Section("About") {
                 LabeledContent("App", value: "AirMate")
-                LabeledContent("Version", value: "0.7.0 beta")
+                LabeledContent("Version", value: "0.8.0 beta")
             }
         }
         .navigationTitle("Settings")
