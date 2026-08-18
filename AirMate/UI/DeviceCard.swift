@@ -8,9 +8,9 @@ struct DeviceCard: View {
             ZStack {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .fill(.quaternary)
-                    .frame(width: 54, height: 54)
+                    .frame(width: 56, height: 56)
                 Image(systemName: device.symbolName)
-                    .font(.system(size: 24, weight: .medium))
+                    .font(.system(size: 25, weight: .medium))
             }
 
             VStack(alignment: .leading, spacing: 5) {
@@ -19,20 +19,24 @@ struct DeviceCard: View {
                     .lineLimit(1)
 
                 HStack(spacing: 7) {
-                    connectionBadge
+                    Text(device.connectionState.rawValue.capitalized)
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(device.connectionState == .connected ? .primary : .secondary)
                     if let rssi = device.rssi {
                         Text("\(rssi) dBm")
                             .font(.caption2)
                             .foregroundStyle(.tertiary)
                     }
+                    Text(device.source.rawValue.replacingOccurrences(of: "appleAdvertisement", with: "Apple"))
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
                 }
 
-                if device.kind == .airPods,
-                   device.secondaryBatteryLevel != nil || device.caseBatteryLevel != nil {
-                    HStack(spacing: 12) {
-                        batteryLabel("L", value: device.batteryLevel)
-                        batteryLabel("R", value: device.secondaryBatteryLevel)
-                        batteryLabel("Case", value: device.caseBatteryLevel)
+                if device.kind == .airPods || device.kind == .beats {
+                    HStack(spacing: 10) {
+                        batteryLabel("L", value: device.batteryLevel, charging: device.isCharging)
+                        batteryLabel("R", value: device.secondaryBatteryLevel, charging: device.isSecondaryCharging)
+                        batteryLabel("Case", value: device.caseBatteryLevel, charging: device.isCaseCharging)
                     }
                 }
             }
@@ -48,27 +52,15 @@ struct DeviceCard: View {
             }
         }
         .padding(11)
-        .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(.thinMaterial)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(.quaternary, lineWidth: 0.5)
-        )
+        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(.thinMaterial))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(.quaternary, lineWidth: 0.5))
     }
 
-    private var connectionBadge: some View {
-        Text(device.connectionState.rawValue.capitalized)
-            .font(.caption2.weight(.medium))
-            .foregroundStyle(device.connectionState == .connected ? .primary : .secondary)
-    }
-
-    private func batteryLabel(_ title: String, value: Int?) -> some View {
+    private func batteryLabel(_ title: String, value: Int?, charging: Bool) -> some View {
         HStack(spacing: 3) {
             Text(title)
-            Text(value.map { "\($0)%" } ?? "—")
-                .monospacedDigit()
+            Text(value.map { "\($0)%" } ?? "—").monospacedDigit()
+            if charging { Image(systemName: "bolt.fill").font(.system(size: 7)) }
         }
         .font(.caption2)
         .foregroundStyle(.secondary)
