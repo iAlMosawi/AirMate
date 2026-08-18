@@ -1,5 +1,6 @@
 #if os(macOS)
 import AppKit
+@preconcurrency import CloudKit
 import Combine
 import Foundation
 @preconcurrency import Network
@@ -17,6 +18,7 @@ final class DeviceStore: ObservableObject {
     let history = BatteryHistoryStore()
     let nearbyMacs = NearbyDeviceExchange()
     let mobileBridge = MobileDeviceBridge()
+    let cloudSync = AirMateCloudSync()
     let notifications = BatteryNotificationService()
 
     private var cancellables = Set<AnyCancellable>()
@@ -34,16 +36,34 @@ final class DeviceStore: ObservableObject {
         )
         .receive(on: RunLoop.main)
         .sink { [weak self] discovered, macState, accessoryState, peers in
-            self?.rebuildDevices(
+            guard let self else { return }
+            self.rebuildDevices(
                 discovered: discovered,
                 macLevel: macState.0,
                 macCharging: macState.1,
                 hid: accessoryState.0,
                 mobile: accessoryState.1,
-                peers: peers
+                peers: peers,
+                cloudPeers: self.cloudSync.peers
             )
         }
         .store(in: &cancellables)
+
+        cloudSync.$peers
+            .receive(on: RunLoop.main)
+            .sink { [weak self] cloudPeers in
+                guard let self else { return }
+                self.rebuildDevices(
+                    discovered: self.bluetoothScanner.discovered,
+                    macLevel: self.macBatteryMonitor.level,
+                    macCharging: self.macBatteryMonitor.isCharging,
+                    hid: self.hidMonitor.devices,
+                    mobile: self.mobileBridge.devices,
+                    peers: self.nearbyMacs.peers,
+                    cloudPeers: cloudPeers
+                )
+            }
+            .store(in: &cancellables)
 
         bluetoothScanner.$state
             .receive(on: RunLoop.main)
@@ -70,6 +90,7 @@ final class DeviceStore: ObservableObject {
         macBatteryMonitor.start()
         hidMonitor.start()
         mobileBridge.start()
+        cloudSync.start()
         if settings.nearbyMacsEnabled { nearbyMacs.start() }
 
         pruneTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
@@ -78,6 +99,7 @@ final class DeviceStore: ObservableObject {
                 self?.hidMonitor.refresh()
                 self?.mobileBridge.prune()
                 self?.nearbyMacs.refreshPeers()
+                self?.cloudSync.refresh()
             }
         }
 
@@ -87,7 +109,8 @@ final class DeviceStore: ObservableObject {
             macCharging: macBatteryMonitor.isCharging,
             hid: hidMonitor.devices,
             mobile: mobileBridge.devices,
-            peers: nearbyMacs.peers
+            peers: nearbyMacs.peers,
+            cloudPeers: cloudSync.peers
         )
     }
 
@@ -96,6 +119,7 @@ final class DeviceStore: ObservableObject {
         hidMonitor.refresh()
         mobileBridge.prune()
         nearbyMacs.refreshPeers()
+        cloudSync.refresh()
         bluetoothScanner.stop()
         bluetoothScanner.start()
         lastRefresh = .now
@@ -115,11 +139,12 @@ final class DeviceStore: ObservableObject {
         macCharging: Bool,
         hid: [AirMateDevice],
         mobile: [AirMateDevice],
-        peers: [AirMateDevice]
+        peers: [AirMateDevice],
+        cloudPeers: [AirMateDevice]
     ) {
         let previous = Dictionary(uniqueKeysWithValues: devices.map { ($0.id, $0) })
         var localResult: [AirMateDevice] = []
-        let localMacID = UUID(uuidString: "A1A1A1A1-0000-4000-8000-000000000001")!
+        let localMacID = cloudSync.installationID
         localResult.append(AirMateDevice(
             id: localMacID,
             name: Host.current().localizedName ?? "This Mac",
@@ -139,9 +164,6 @@ final class DeviceStore: ObservableObject {
             localResult.append(device)
         }
 
-        // CoreBluetooth can see many advertisements that are only nearby. The main
-        // AirMate device list intentionally mirrors active Bluetooth connections, so
-        // only devices confirmed connected by IOBluetooth are promoted here.
         let connectedBluetooth = discovered.values
             .filter { $0.connectionState == .connected }
             .sorted { lhs, rhs in lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending }
@@ -149,13 +171,19 @@ final class DeviceStore: ObservableObject {
             localResult.append(device)
         }
 
-        // Every AirMate peer receives only this connected/local snapshot. Nearby BLE
-        // advertisements never leak into the ecosystem device list.
+        // Publish only this Mac's currently connected/local snapshot. Both transports
+        // carry the same Codable payload: Bonjour for LAN speed, CloudKit for reachability
+        // across different Wi-Fi networks or cellular connections.
         nearbyMacs.updateLocalDevices(localResult)
+        cloudSync.updateLocalDevices(localResult)
 
         var result = localResult
         if settings?.nearbyMacsEnabled != false {
+            // Prefer a live Bonjour copy when the same device also arrived through cloud.
             for device in peers where device.connectionState == .connected && seen.insert(device.id).inserted {
+                result.append(device)
+            }
+            for device in cloudPeers where device.connectionState == .connected && seen.insert(device.id).inserted {
                 result.append(device)
             }
         }
@@ -175,6 +203,161 @@ final class DeviceStore: ObservableObject {
            }) {
             hud.show(device: newHeadset)
         }
+    }
+}
+
+@MainActor
+final class AirMateCloudSync: ObservableObject {
+    @Published private(set) var peers: [AirMateDevice] = []
+    @Published private(set) var statusText = "Starting…"
+    @Published private(set) var lastSync: Date?
+
+    let installationID: UUID
+
+    private let container = CKContainer(identifier: "iCloud.com.almosawi.airmate")
+    private var localDevices: [AirMateDevice] = []
+    private var scheduledSync: Task<Void, Never>?
+    private let recordType = "AirMateSnapshot"
+    private let liveWindow: TimeInterval = 180
+
+    init() {
+        let key = "AirMateCloudInstallationID"
+        if let value = UserDefaults.standard.string(forKey: key), let existing = UUID(uuidString: value) {
+            installationID = existing
+        } else {
+            let id = UUID()
+            UserDefaults.standard.set(id.uuidString, forKey: key)
+            installationID = id
+        }
+    }
+
+    private var recordID: CKRecord.ID {
+        CKRecord.ID(recordName: "snapshot-\(installationID.uuidString)")
+    }
+
+    private var hostName: String {
+        Host.current().localizedName ?? "AirMate Mac"
+    }
+
+    func start() {
+        refresh()
+    }
+
+    func updateLocalDevices(_ devices: [AirMateDevice]) {
+        localDevices = devices.filter { $0.connectionState == .connected && $0.source != .nearbyMac }
+        scheduleSync(after: .seconds(2))
+    }
+
+    func refresh() {
+        scheduleSync(after: .zero)
+    }
+
+    private func scheduleSync(after delay: Duration) {
+        scheduledSync?.cancel()
+        scheduledSync = Task { [weak self] in
+            if delay != .zero { try? await Task.sleep(for: delay) }
+            guard !Task.isCancelled else { return }
+            await self?.syncNow()
+        }
+    }
+
+    private func syncNow() async {
+        do {
+            let account = try await container.accountStatus()
+            guard account == .available else {
+                peers = []
+                statusText = "iCloud unavailable"
+                return
+            }
+
+            statusText = "Syncing…"
+            let database = container.privateCloudDatabase
+            try await uploadLocalSnapshot(to: database)
+            peers = try await fetchRemoteSnapshots(from: database)
+            lastSync = .now
+            statusText = peers.isEmpty ? "Cloud connected" : "Cloud connected • \(peerHostCount) peers"
+        } catch {
+            statusText = "Cloud sync unavailable"
+        }
+    }
+
+    private func uploadLocalSnapshot(to database: CKDatabase) async throws {
+        guard let payload = try? JSONEncoder().encode(localDevices) else { return }
+        let record: CKRecord
+        do {
+            record = try await database.record(for: recordID)
+        } catch let error as CKError where error.code == .unknownItem {
+            record = CKRecord(recordType: recordType, recordID: recordID)
+        }
+
+        record["hostName"] = hostName as CKRecordValue
+        record["platform"] = "macOS" as CKRecordValue
+        record["updatedAt"] = Date() as CKRecordValue
+        record["payload"] = payload as CKRecordValue
+        _ = try await database.save(record)
+    }
+
+    private func fetchRemoteSnapshots(from database: CKDatabase) async throws -> [AirMateDevice] {
+        let query = CKQuery(recordType: recordType, predicate: NSPredicate(value: true))
+        let response = try await database.records(
+            matching: query,
+            inZoneWith: nil,
+            desiredKeys: ["hostName", "platform", "updatedAt", "payload"],
+            resultsLimit: 100
+        )
+
+        var output: [AirMateDevice] = []
+        let now = Date()
+        for (id, result) in response.matchResults where id != recordID {
+            guard case .success(let record) = result,
+                  let payload = record["payload"] as? Data,
+                  let decoded = try? JSONDecoder().decode([AirMateDevice].self, from: payload) else { continue }
+
+            let updatedAt = (record["updatedAt"] as? Date) ?? record.modificationDate ?? .distantPast
+            guard now.timeIntervalSince(updatedAt) <= liveWindow else { continue }
+            let remoteHost = (record["hostName"] as? String) ?? "AirMate Device"
+
+            for original in decoded where original.connectionState == .connected {
+                if original.kind == .mac {
+                    output.append(AirMateDevice(
+                        id: stablePeerUUID(id.recordName),
+                        name: remoteHost,
+                        kind: .nearbyMac,
+                        modelName: original.modelName,
+                        batteryLevel: original.batteryLevel,
+                        isCharging: original.isCharging,
+                        connectionState: .connected,
+                        source: .nearbyMac,
+                        lastSeen: updatedAt,
+                        metadata: ["cloudPeer": remoteHost, "sync": "CloudKit"]
+                    ))
+                } else {
+                    var device = original
+                    device.source = .nearbyMac
+                    device.connectionState = .connected
+                    device.lastSeen = updatedAt
+                    device.metadata["cloudPeer"] = remoteHost
+                    device.metadata["sync"] = "CloudKit"
+                    output.append(device)
+                }
+            }
+        }
+        return output
+    }
+
+    private var peerHostCount: Int {
+        Set(peers.compactMap { $0.metadata["cloudPeer"] }).count
+    }
+
+    private func stablePeerUUID(_ value: String) -> UUID {
+        var bytes = [UInt8](repeating: 0, count: 16)
+        for (index, byte) in value.utf8.enumerated() {
+            bytes[index % 16] = bytes[index % 16] &+ byte &+ UInt8(truncatingIfNeeded: index)
+        }
+        bytes[6] = (bytes[6] & 0x0F) | 0x40
+        bytes[8] = (bytes[8] & 0x3F) | 0x80
+        let tuple: uuid_t = (bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7], bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15])
+        return UUID(uuid: tuple)
     }
 }
 
@@ -369,7 +552,7 @@ final class NearbyDeviceExchange: ObservableObject {
                         connectionState: .connected,
                         source: .nearbyMac,
                         lastSeen: .now,
-                        metadata: ["nearbyPeer": peerName]
+                        metadata: ["nearbyPeer": peerName, "sync": "Bonjour"]
                     )
                 }
                 var device = original
@@ -377,6 +560,7 @@ final class NearbyDeviceExchange: ObservableObject {
                 device.connectionState = .connected
                 device.lastSeen = .now
                 device.metadata["nearbyPeer"] = peerName
+                device.metadata["sync"] = "Bonjour"
                 return device
             }
         peerSnapshots[peerName] = converted
