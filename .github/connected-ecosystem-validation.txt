@@ -1,0 +1,1 @@
+Validation marker for connected-device ecosystem sync.
