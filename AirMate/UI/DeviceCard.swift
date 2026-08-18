@@ -2,7 +2,9 @@
 import SwiftUI
 
 struct DeviceCard: View {
+    @EnvironmentObject private var settings: AppSettings
     let device: AirMateDevice
+
     var body: some View {
         HStack(spacing: 12) {
             ZStack {
@@ -10,10 +12,17 @@ struct DeviceCard: View {
                 Image(systemName: device.symbolName).font(.system(size: 25, weight: .medium))
             }
             VStack(alignment: .leading, spacing: 5) {
-                Text(device.name).font(.system(size: 14, weight: .semibold)).lineLimit(1)
+                HStack(spacing: 6) {
+                    Text(device.name).font(.system(size: 14, weight: .semibold)).lineLimit(1)
+                    if settings.isFavorite(device.id) {
+                        Image(systemName: "star.fill")
+                            .font(.caption2)
+                            .foregroundStyle(.yellow)
+                    }
+                }
                 HStack(spacing: 7) {
                     Text(device.connectionState.rawValue.capitalized).font(.caption2.weight(.medium)).foregroundStyle(device.connectionState == .connected ? .primary : .secondary)
-                    if let rssi = device.rssi { Text("\(rssi) dBm").font(.caption2).foregroundStyle(.tertiary) }
+                    if settings.showSignalStrength, let rssi = device.rssi { Text("\(rssi) dBm").font(.caption2).foregroundStyle(.tertiary) }
                     Text(device.source.rawValue.replacingOccurrences(of: "appleAdvertisement", with: "Apple")).font(.caption2).foregroundStyle(.tertiary)
                 }
                 if device.kind == .airPods || device.kind == .beats {
@@ -27,11 +36,20 @@ struct DeviceCard: View {
             Spacer(minLength: 8)
             if let level = device.batteryLevel { BatteryGauge(level: level, charging: device.isCharging) }
             else if device.kind == .mac { Text("AC").font(.caption.weight(.semibold)).foregroundStyle(.secondary) }
+
+            Button {
+                settings.toggleFavorite(device.id)
+            } label: {
+                Image(systemName: settings.isFavorite(device.id) ? "star.fill" : "star")
+            }
+            .buttonStyle(.plain)
+            .help(settings.isFavorite(device.id) ? "Unpin device" : "Pin device")
         }
         .padding(11)
         .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(.thinMaterial))
         .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(.quaternary, lineWidth: 0.5))
     }
+
     private func batteryLabel(_ title: String, value: Int?, charging: Bool) -> some View {
         HStack(spacing: 3) {
             Text(title); Text(value.map { "\($0)%" } ?? "—").monospacedDigit()
