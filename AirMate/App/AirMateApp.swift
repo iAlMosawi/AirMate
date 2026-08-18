@@ -30,9 +30,9 @@ struct AirMateApp: App {
 }
 
 struct RefreshAirMateIntent: AppIntent {
-    static var title: LocalizedStringResource = "Refresh AirMate Devices"
-    static var description = IntentDescription("Opens AirMate so its nearby device information can refresh.")
-    static var openAppWhenRun = true
+    static let title: LocalizedStringResource = "Refresh AirMate Devices"
+    static let description = IntentDescription("Opens AirMate so its nearby device information can refresh.")
+    static let openAppWhenRun = true
 
     func perform() async throws -> some IntentResult {
         .result(dialog: "AirMate is ready.")
