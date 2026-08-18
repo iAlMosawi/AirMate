@@ -31,6 +31,10 @@ jobs:
       - uses: actions/checkout@v4
       - name: Xcode version
         run: xcodebuild -version
+      - name: Show mobile widget build settings
+        shell: bash
+        run: |
+          xcodebuild -project AirMate.xcodeproj -target AirMateMobileWidget -configuration Debug -sdk iphonesimulator -showBuildSettings | grep -E '(^| )((INFOPLIST_FILE|GENERATE_INFOPLIST_FILE|PRODUCT_BUNDLE_IDENTIFIER|IPHONEOS_DEPLOYMENT_TARGET|SDKROOT|SUPPORTED_PLATFORMS|PRODUCT_TYPE|WRAPPER_EXTENSION) = )' || true
       - name: Build iPhone/iPad companion
         shell: bash
         run: |
@@ -49,6 +53,10 @@ jobs:
       - uses: actions/checkout@v4
       - name: Xcode version
         run: xcodebuild -version
+      - name: Show watch build settings
+        shell: bash
+        run: |
+          xcodebuild -project AirMate.xcodeproj -target AirMateWatch -configuration Debug -sdk watchsimulator -showBuildSettings | grep -E '(^| )((INFOPLIST_FILE|GENERATE_INFOPLIST_FILE|PRODUCT_BUNDLE_IDENTIFIER|WATCHOS_DEPLOYMENT_TARGET|SDKROOT|SUPPORTED_PLATFORMS|PRODUCT_TYPE|WRAPPER_EXTENSION) = )' || true
       - name: Build Watch companion
         shell: bash
         run: |
