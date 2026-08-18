@@ -1,0 +1,1 @@
+Validate corrected Watch and mobile widget build configuration object IDs.
