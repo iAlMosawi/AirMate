@@ -54,7 +54,7 @@ final class DeviceStore: ObservableObject {
                 case .unsupported: "Unsupported"
                 case .unauthorized: "Permission required"
                 case .poweredOff: "Bluetooth off"
-                case .poweredOn: "Scanning"
+                case .poweredOn: "Connected-device sync active"
                 @unknown default: "Unknown"
                 }
             }
@@ -127,25 +127,37 @@ final class DeviceStore: ObservableObject {
             batteryLevel: macLevel,
             isCharging: macCharging,
             connectionState: .connected,
-            source: .localMac
+            source: .localMac,
+            metadata: ["transport": "local"]
         ))
 
         var seen = Set<UUID>([localMacID])
-        for device in hid where seen.insert(device.id).inserted { localResult.append(device) }
-        for device in mobile where seen.insert(device.id).inserted { localResult.append(device) }
-
-        let nearby = discovered.values.sorted {
-            if $0.kind == .airPods && $1.kind != .airPods { return true }
-            if $0.kind != .airPods && $1.kind == .airPods { return false }
-            return ($0.rssi ?? -100) > ($1.rssi ?? -100)
+        for device in hid where device.connectionState == .connected && seen.insert(device.id).inserted {
+            localResult.append(device)
         }
-        for device in nearby where seen.insert(device.id).inserted { localResult.append(device) }
+        for device in mobile where device.connectionState == .connected && seen.insert(device.id).inserted {
+            localResult.append(device)
+        }
 
+        // CoreBluetooth can see many advertisements that are only nearby. The main
+        // AirMate device list intentionally mirrors active Bluetooth connections, so
+        // only devices confirmed connected by IOBluetooth are promoted here.
+        let connectedBluetooth = discovered.values
+            .filter { $0.connectionState == .connected }
+            .sorted { lhs, rhs in lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending }
+        for device in connectedBluetooth where seen.insert(device.id).inserted {
+            localResult.append(device)
+        }
+
+        // Every AirMate peer receives only this connected/local snapshot. Nearby BLE
+        // advertisements never leak into the ecosystem device list.
         nearbyMacs.updateLocalDevices(localResult)
 
         var result = localResult
         if settings?.nearbyMacsEnabled != false {
-            for device in peers where seen.insert(device.id).inserted { result.append(device) }
+            for device in peers where device.connectionState == .connected && seen.insert(device.id).inserted {
+                result.append(device)
+            }
         }
 
         devices = result
@@ -158,7 +170,8 @@ final class DeviceStore: ObservableObject {
 
         if settings?.showConnectionHUD != false,
            let newHeadset = result.first(where: { device in
-               (device.kind == .airPods || device.kind == .beats) && previous[device.id] == nil
+               (device.kind == .airPods || device.kind == .beats) &&
+               device.connectionState == .connected && previous[device.id] == nil
            }) {
             hud.show(device: newHeadset)
         }
@@ -266,7 +279,7 @@ final class NearbyDeviceExchange: ObservableObject {
     private let queue = DispatchQueue(label: "com.almosawi.airmate.nearby", qos: .utility)
 
     func updateLocalDevices(_ devices: [AirMateDevice]) {
-        localDevices = devices.filter { $0.source != .nearbyMac }
+        localDevices = devices.filter { $0.source != .nearbyMac && $0.connectionState == .connected }
     }
 
     func start() {
@@ -284,6 +297,7 @@ final class NearbyDeviceExchange: ObservableObject {
                     }
                 }
                 self.endpoints = found
+                self.peerSnapshots = self.peerSnapshots.filter { found[$0.key] != nil }
                 self.refreshPeers()
             }
         }
@@ -341,26 +355,30 @@ final class NearbyDeviceExchange: ObservableObject {
     }
 
     private func storeSnapshot(_ snapshot: [AirMateDevice], peerName: String) {
-        let converted = snapshot.map { original -> AirMateDevice in
-            if original.kind == .mac {
-                return AirMateDevice(
-                    id: peerUUID(peerName),
-                    name: peerName,
-                    kind: .nearbyMac,
-                    modelName: original.modelName,
-                    batteryLevel: original.batteryLevel,
-                    isCharging: original.isCharging,
-                    connectionState: .connected,
-                    source: .nearbyMac,
-                    lastSeen: .now,
-                    metadata: ["nearbyMac": peerName]
-                )
+        let converted = snapshot
+            .filter { $0.connectionState == .connected }
+            .map { original -> AirMateDevice in
+                if original.kind == .mac {
+                    return AirMateDevice(
+                        id: peerUUID(peerName),
+                        name: peerName,
+                        kind: .nearbyMac,
+                        modelName: original.modelName,
+                        batteryLevel: original.batteryLevel,
+                        isCharging: original.isCharging,
+                        connectionState: .connected,
+                        source: .nearbyMac,
+                        lastSeen: .now,
+                        metadata: ["nearbyPeer": peerName]
+                    )
+                }
+                var device = original
+                device.source = .nearbyMac
+                device.connectionState = .connected
+                device.lastSeen = .now
+                device.metadata["nearbyPeer"] = peerName
+                return device
             }
-            var device = original
-            device.source = .nearbyMac
-            device.metadata["nearbyMac"] = peerName
-            return device
-        }
         peerSnapshots[peerName] = converted
         peers = peerSnapshots.keys.sorted().flatMap { peerSnapshots[$0] ?? [] }
     }
