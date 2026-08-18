@@ -30,7 +30,7 @@ struct AirMateMobileWidgetProvider: TimelineProvider {
         let level = raw >= 0 ? Int((raw * 100).rounded()) : nil
         let charging: Bool
         switch UIDevice.current.batteryState {
-        case .charging, .full: charging = true
+        case .charging, .full: charging = level != nil
         default: charging = false
         }
         return AirMateMobileWidgetEntry(
@@ -73,11 +73,17 @@ struct AirMateMobileWidgetView: View {
                 ProgressView(value: Double(level), total: 100)
                     .progressViewStyle(.linear)
             } else {
-                Text("Open AirMate")
-                    .font(.title3.bold())
-                Text("to refresh battery status")
+                Text("Battery unavailable")
+                    .font(.headline)
+                #if targetEnvironment(simulator)
+                Text("Use a physical device")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                #else
+                Text("Open AirMate to refresh")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                #endif
             }
 
             Text(entry.deviceName)
