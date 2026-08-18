@@ -1,0 +1,2 @@
+AirMate beta CI validation.
+Detailed build log capture enabled.
