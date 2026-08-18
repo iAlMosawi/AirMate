@@ -1,7 +1,7 @@
 import AppKit
 import Combine
 import Foundation
-import Network
+@preconcurrency import Network
 import SwiftUI
 
 @MainActor
@@ -214,7 +214,9 @@ final class MobileDeviceBridge: ObservableObject {
         do {
             let listener = try NWListener(using: .tcp, on: .any)
             listener.service = NWListener.Service(name: Host.current().localizedName ?? "AirMate Mac", type: "_airmate-mobile._tcp")
-            listener.newConnectionHandler = { [weak self] connection in self?.receive(on: connection) }
+            listener.newConnectionHandler = { [weak self] connection in
+                Task { @MainActor in self?.receive(on: connection) }
+            }
             listener.start(queue: queue)
             self.listener = listener
         } catch {
@@ -228,7 +230,7 @@ final class MobileDeviceBridge: ObservableObject {
         devices = byID.values.sorted { $0.name < $1.name }
     }
 
-    private nonisolated func receive(on connection: NWConnection) {
+    private func receive(on connection: NWConnection) {
         connection.start(queue: queue)
         connection.receive(minimumIncompleteLength: 1, maximumLength: 262_144) { [weak self] data, _, _, _ in
             defer { connection.cancel() }
