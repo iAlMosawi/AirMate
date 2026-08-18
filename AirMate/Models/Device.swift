@@ -1,34 +1,12 @@
+#if os(macOS)
 import Foundation
 
 struct AirMateDevice: Identifiable, Hashable, Codable {
     enum Kind: String, CaseIterable, Codable {
-        case mac
-        case airPods
-        case beats
-        case iPhone
-        case iPad
-        case appleWatch
-        case keyboard
-        case mouse
-        case trackpad
-        case bluetooth
-        case nearbyMac
+        case mac, airPods, beats, iPhone, iPad, appleWatch, keyboard, mouse, trackpad, bluetooth, nearbyMac
     }
-
-    enum ConnectionState: String, Codable {
-        case connected
-        case nearby
-        case disconnected
-    }
-
-    enum Source: String, Codable {
-        case localMac
-        case coreBluetooth
-        case appleAdvertisement
-        case hid
-        case nearbyMac
-        case pairedMobile
-    }
+    enum ConnectionState: String, Codable { case connected, nearby, disconnected }
+    enum Source: String, Codable { case localMac, coreBluetooth, appleAdvertisement, hid, nearbyMac, pairedMobile }
 
     let id: UUID
     var name: String
@@ -46,38 +24,11 @@ struct AirMateDevice: Identifiable, Hashable, Codable {
     var lastSeen: Date
     var metadata: [String: String]
 
-    init(
-        id: UUID = UUID(),
-        name: String,
-        kind: Kind,
-        modelName: String? = nil,
-        batteryLevel: Int? = nil,
-        secondaryBatteryLevel: Int? = nil,
-        caseBatteryLevel: Int? = nil,
-        isCharging: Bool = false,
-        isSecondaryCharging: Bool = false,
-        isCaseCharging: Bool = false,
-        connectionState: ConnectionState = .nearby,
-        source: Source = .coreBluetooth,
-        rssi: Int? = nil,
-        lastSeen: Date = .now,
-        metadata: [String: String] = [:]
-    ) {
-        self.id = id
-        self.name = name
-        self.kind = kind
-        self.modelName = modelName
-        self.batteryLevel = batteryLevel
-        self.secondaryBatteryLevel = secondaryBatteryLevel
-        self.caseBatteryLevel = caseBatteryLevel
-        self.isCharging = isCharging
-        self.isSecondaryCharging = isSecondaryCharging
-        self.isCaseCharging = isCaseCharging
-        self.connectionState = connectionState
-        self.source = source
-        self.rssi = rssi
-        self.lastSeen = lastSeen
-        self.metadata = metadata
+    init(id: UUID = UUID(), name: String, kind: Kind, modelName: String? = nil, batteryLevel: Int? = nil, secondaryBatteryLevel: Int? = nil, caseBatteryLevel: Int? = nil, isCharging: Bool = false, isSecondaryCharging: Bool = false, isCaseCharging: Bool = false, connectionState: ConnectionState = .nearby, source: Source = .coreBluetooth, rssi: Int? = nil, lastSeen: Date = .now, metadata: [String: String] = [:]) {
+        self.id = id; self.name = name; self.kind = kind; self.modelName = modelName
+        self.batteryLevel = batteryLevel; self.secondaryBatteryLevel = secondaryBatteryLevel; self.caseBatteryLevel = caseBatteryLevel
+        self.isCharging = isCharging; self.isSecondaryCharging = isSecondaryCharging; self.isCaseCharging = isCaseCharging
+        self.connectionState = connectionState; self.source = source; self.rssi = rssi; self.lastSeen = lastSeen; self.metadata = metadata
     }
 
     var symbolName: String {
@@ -94,30 +45,14 @@ struct AirMateDevice: Identifiable, Hashable, Codable {
         case .bluetooth: return "dot.radiowaves.left.and.right"
         }
     }
-
-    var hasAnyBattery: Bool {
-        batteryLevel != nil || secondaryBatteryLevel != nil || caseBatteryLevel != nil
-    }
-
-    var primaryBatteryText: String {
-        batteryLevel.map { "\($0)%" } ?? "—"
-    }
+    var hasAnyBattery: Bool { batteryLevel != nil || secondaryBatteryLevel != nil || caseBatteryLevel != nil }
+    var primaryBatteryText: String { batteryLevel.map { "\($0)%" } ?? "—" }
 }
 
 struct BatteryHistorySample: Identifiable, Codable, Hashable {
-    let id: UUID
-    let deviceID: UUID
-    let deviceName: String
-    let level: Int
-    let charging: Bool
-    let date: Date
-
+    let id: UUID; let deviceID: UUID; let deviceName: String; let level: Int; let charging: Bool; let date: Date
     init(device: AirMateDevice, level: Int, date: Date = .now) {
-        id = UUID()
-        deviceID = device.id
-        deviceName = device.name
-        self.level = level
-        charging = device.isCharging
-        self.date = date
+        id = UUID(); deviceID = device.id; deviceName = device.name; self.level = level; charging = device.isCharging; self.date = date
     }
 }
+#endif
