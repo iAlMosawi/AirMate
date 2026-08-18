@@ -1,3 +1,4 @@
+#if os(macOS)
 import Combine
 import CoreBluetooth
 import Foundation
@@ -101,9 +102,6 @@ extension BluetoothScanner: CBCentralManagerDelegate {
     }
 }
 
-/// Clean-room, best-effort parser for Apple manufacturer advertisements. Apple does not
-/// document AirPods battery advertisement bytes as a public API, so this component is
-/// deliberately isolated and can be updated without touching the rest of AirMate.
 struct AppleAdvertisementParser {
     struct Result {
         let kind: AirMateDevice.Kind
@@ -119,7 +117,6 @@ struct AppleAdvertisementParser {
     func parse(_ data: Data, fallbackName: String) -> Result? {
         let bytes = [UInt8](data)
         guard bytes.count >= 8 else { return nil }
-
         let hasAppleCompanyID = bytes[0] == 0x4C && bytes[1] == 0x00
         guard hasAppleCompanyID else { return nil }
         guard bytes.dropFirst(2).contains(0x07) else { return nil }
@@ -210,9 +207,7 @@ final class HIDAccessoryMonitor: ObservableObject {
 final class BatteryHistoryStore: ObservableObject {
     @Published private(set) var samples: [BatteryHistorySample] = []
     private var lastRecorded: [UUID: (level: Int, date: Date)] = [:]
-
     init() { load() }
-
     func record(_ devices: [AirMateDevice]) {
         var changed = false
         for device in devices {
@@ -227,27 +222,18 @@ final class BatteryHistoryStore: ObservableObject {
         if samples.count > 10_000 { samples.removeFirst(samples.count - 10_000) }
         if changed { save() }
     }
-
-    func samples(for deviceID: UUID) -> [BatteryHistorySample] {
-        samples.filter { $0.deviceID == deviceID }
-    }
-
+    func samples(for deviceID: UUID) -> [BatteryHistorySample] { samples.filter { $0.deviceID == deviceID } }
     private var url: URL? {
         guard let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
         let folder = root.appendingPathComponent("AirMate", isDirectory: true)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         return folder.appendingPathComponent("battery-history.json")
     }
-
     private func load() {
-        guard let url, let data = try? Data(contentsOf: url),
-              let decoded = try? JSONDecoder().decode([BatteryHistorySample].self, from: data) else { return }
+        guard let url, let data = try? Data(contentsOf: url), let decoded = try? JSONDecoder().decode([BatteryHistorySample].self, from: data) else { return }
         samples = decoded
-        for sample in decoded.suffix(1000) {
-            lastRecorded[sample.deviceID] = (sample.level, sample.date)
-        }
+        for sample in decoded.suffix(1000) { lastRecorded[sample.deviceID] = (sample.level, sample.date) }
     }
-
     private func save() {
         guard let url, let data = try? JSONEncoder().encode(samples) else { return }
         try? data.write(to: url, options: .atomic)
@@ -257,11 +243,7 @@ final class BatteryHistoryStore: ObservableObject {
 @MainActor
 final class BatteryNotificationService {
     private var notifiedLevels: [UUID: Int] = [:]
-
-    func requestAuthorization() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
-    }
-
+    func requestAuthorization() { UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in } }
     func evaluate(_ devices: [AirMateDevice], threshold: Int) {
         for device in devices {
             guard let level = device.batteryLevel, level <= threshold, !device.isCharging else {
@@ -270,7 +252,6 @@ final class BatteryNotificationService {
             }
             guard notifiedLevels[device.id] != level else { continue }
             notifiedLevels[device.id] = level
-
             let content = UNMutableNotificationContent()
             content.title = "\(device.name) battery is low"
             content.body = "Battery is at \(level)%."
@@ -286,36 +267,21 @@ final class NearbyMacService: ObservableObject {
     @Published private(set) var peers: [AirMateDevice] = []
     private var browser: NWBrowser?
     private var listener: NWListener?
-
     func start() {
         startAdvertising()
         let browser = NWBrowser(for: .bonjour(type: "_airmate._tcp", domain: nil), using: .tcp)
         browser.browseResultsChangedHandler = { [weak self] results, _ in
             Task { @MainActor in
                 self?.peers = results.compactMap { result in
-                    guard case let .service(name, _, _, _) = result.endpoint,
-                          name != Host.current().localizedName else { return nil }
-                    return AirMateDevice(
-                        name: name,
-                        kind: .nearbyMac,
-                        connectionState: .nearby,
-                        source: .nearbyMac,
-                        lastSeen: .now
-                    )
+                    guard case let .service(name, _, _, _) = result.endpoint, name != Host.current().localizedName else { return nil }
+                    return AirMateDevice(name: name, kind: .nearbyMac, connectionState: .nearby, source: .nearbyMac, lastSeen: .now)
                 }
             }
         }
         browser.start(queue: DispatchQueue.global(qos: .utility))
         self.browser = browser
     }
-
-    func stop() {
-        browser?.cancel()
-        listener?.cancel()
-        browser = nil
-        listener = nil
-    }
-
+    func stop() { browser?.cancel(); listener?.cancel(); browser = nil; listener = nil }
     private func startAdvertising() {
         do {
             let listener = try NWListener(using: .tcp, on: .any)
@@ -323,8 +289,7 @@ final class NearbyMacService: ObservableObject {
             listener.newConnectionHandler = { connection in connection.cancel() }
             listener.start(queue: DispatchQueue.global(qos: .utility))
             self.listener = listener
-        } catch {
-            listener = nil
-        }
+        } catch { listener = nil }
     }
 }
+#endif
