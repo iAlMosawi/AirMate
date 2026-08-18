@@ -2,11 +2,14 @@
 
 AirMate is a clean-room, native Apple-platform companion project inspired by the convenience of device dashboards such as AirBuddy. It does not use AirBuddy source code, artwork, branding, or proprietary assets.
 
-## Projects
+## One Xcode project
 
-- `AirMate.xcodeproj` — macOS 26+ menu-bar app, HUD and WidgetKit extension
-- `AirMateMobile.xcodeproj` — iPhone/iPad 26+ battery companion
-- `AirMateWatch.xcodeproj` — watchOS 26+ battery companion
+Open only `AirMate.xcodeproj`. It now contains all AirMate targets:
+
+- `AirMate` — macOS 26+ menu-bar app and HUD
+- `AirMateWidget` — macOS WidgetKit extension
+- `AirMateMobile` — iPhone/iPad 26+ battery companion
+- `AirMateWatch` — watchOS 26+ battery companion
 
 Primary macOS bundle ID: `com.almosawi.airmate`
 
@@ -29,7 +32,7 @@ Primary macOS bundle ID: `com.almosawi.airmate`
 - Shortcuts/App Intents entry point
 - WidgetKit extension
 - Swift 6 / Xcode 27 project structure
-- GitHub Actions builds for macOS, iOS and watchOS targets
+- GitHub Actions builds for macOS, iOS and watchOS targets from the same Xcode project
 
 ## Important compatibility notes
 
@@ -47,7 +50,7 @@ Requirements:
 - macOS 26+
 - Apple Silicon recommended
 
-Clone and open the Mac project:
+Clone and open the single project:
 
 ```bash
 git clone https://github.com/iAlMosawi/AirMate.git
@@ -55,19 +58,9 @@ cd AirMate
 open AirMate.xcodeproj
 ```
 
-For iPhone/iPad:
+Inside Xcode, choose the target/scheme you want to run: `AirMate`, `AirMateMobile`, or `AirMateWatch`. The `AirMateWidget` extension is built with the Mac app.
 
-```bash
-open AirMateMobile.xcodeproj
-```
-
-For Apple Watch:
-
-```bash
-open AirMateWatch.xcodeproj
-```
-
-Choose your Apple Development team in Signing & Capabilities before installing the companion apps on physical devices.
+Choose your Apple Development team in Signing & Capabilities before installing the apps on physical devices.
 
 ## Local network services
 
@@ -84,4 +77,4 @@ The current beta does not require an AirMate cloud service. Device discovery, ba
 
 Version: **0.5.0 beta**
 
-The codebase contains all planned beta phases. Real-device testing remains necessary for Bluetooth advertisement calibration, device-specific compatibility and final UI/behavior polish.
+The unified Xcode project passes Xcode 27 CI for the Mac + Widget, iPhone/iPad, and Apple Watch targets. Real-device testing remains necessary for Bluetooth advertisement calibration, device-specific compatibility and final UI/behavior polish.
