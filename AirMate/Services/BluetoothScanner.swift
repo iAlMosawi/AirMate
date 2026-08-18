@@ -1,3 +1,4 @@
+import Combine
 import CoreBluetooth
 import Foundation
 import IOKit.hid
@@ -116,18 +117,12 @@ struct AppleAdvertisementParser {
         let bytes = [UInt8](data)
         guard bytes.count >= 8 else { return nil }
 
-        // Manufacturer data normally begins with Apple's Bluetooth company identifier 0x004C.
         let hasAppleCompanyID = bytes[0] == 0x4C && bytes[1] == 0x00
         guard hasAppleCompanyID else { return nil }
-
-        // Proximity-pairing payloads used by AirPods/Beats commonly use Apple type 0x07.
         guard bytes.dropFirst(2).contains(0x07) else { return nil }
 
         let lowerName = fallbackName.lowercased()
         let kind: AirMateDevice.Kind = lowerName.contains("beats") ? .beats : .airPods
-
-        // Battery values appear as four-bit levels in several proximity-pairing payload
-        // revisions. Keep this heuristic conservative: values outside 0...10 are ignored.
         let candidates = bytes.suffix(min(bytes.count, 8)).flatMap { byte -> [Int] in
             [Int(byte & 0x0F), Int((byte >> 4) & 0x0F)]
         }.filter { $0 <= 10 }
@@ -173,13 +168,14 @@ final class HIDAccessoryMonitor: ObservableObject {
         let manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
         IOHIDManagerSetDeviceMatching(manager, nil)
         guard IOHIDManagerOpen(manager, IOOptionBits(kIOHIDOptionsTypeNone)) == kIOReturnSuccess,
-              let set = IOHIDManagerCopyDevices(manager) as? Set<IOHIDDevice> else {
+              let deviceSet = IOHIDManagerCopyDevices(manager) else {
             devices = []
             return
         }
 
+        let hidDevices = (deviceSet as NSSet).allObjects.compactMap { $0 as? IOHIDDevice }
         var result: [AirMateDevice] = []
-        for device in set {
+        for device in hidDevices {
             guard let product = IOHIDDeviceGetProperty(device, "Product" as CFString) as? String else { continue }
             let lower = product.lowercased()
             let kind: AirMateDevice.Kind
@@ -189,7 +185,7 @@ final class HIDAccessoryMonitor: ObservableObject {
             else { continue }
 
             let battery = (IOHIDDeviceGetProperty(device, "BatteryPercent" as CFString) as? NSNumber)?.intValue
-            let registryID = (IOHIDDeviceGetProperty(device, "RegistryID" as CFString) as? NSNumber)?.uint64Value ?? UInt64(abs(product.hashValue))
+            let registryID = (IOHIDDeviceGetProperty(device, "RegistryID" as CFString) as? NSNumber)?.uint64Value ?? UInt64(bitPattern: Int64(product.hashValue))
             let uuid = UUID(uuidString: String(format: "%08X-0000-4000-8000-%012llX", UInt32(truncatingIfNeeded: registryID), registryID & 0xFFFFFFFFFFFF)) ?? UUID()
 
             result.append(AirMateDevice(
@@ -305,7 +301,7 @@ final class NearbyMacService: ObservableObject {
                 }
             }
         }
-        browser.start(queue: .global(qos: .utility))
+        browser.start(queue: DispatchQueue.global(qos: .utility))
         self.browser = browser
     }
 
@@ -321,7 +317,7 @@ final class NearbyMacService: ObservableObject {
             let listener = try NWListener(using: .tcp, on: .any)
             listener.service = NWListener.Service(name: Host.current().localizedName ?? "AirMate Mac", type: "_airmate._tcp")
             listener.newConnectionHandler = { connection in connection.cancel() }
-            listener.start(queue: .global(qos: .utility))
+            listener.start(queue: DispatchQueue.global(qos: .utility))
             self.listener = listener
         } catch {
             listener = nil
