@@ -1,6 +1,7 @@
 import Network
 import SwiftUI
 import UIKit
+import WidgetKit
 
 private struct MobileDevicePayload: Codable {
     enum Kind: String, Codable { case mac, airPods, beats, iPhone, iPad, appleWatch, keyboard, mouse, trackpad, bluetooth, nearbyMac }
@@ -30,10 +31,12 @@ final class MobileReporter: ObservableObject {
     @Published private(set) var isCharging = false
     @Published private(set) var discoveredMacs: [String] = []
     @Published private(set) var lastSent: Date?
+    @Published private(set) var isSearching = true
 
     private var browser: NWBrowser?
     private var endpoints: [String: NWEndpoint] = [:]
     private var timer: Timer?
+    private var observers: [NSObjectProtocol] = []
     private let queue = DispatchQueue(label: "com.almosawi.airmate.mobile.reporter", qos: .utility)
 
     private var stableID: UUID {
@@ -44,18 +47,48 @@ final class MobileReporter: ObservableObject {
         return id
     }
 
+    var deviceName: String { UIDevice.current.name }
+    var modelName: String { UIDevice.current.model }
+    var osVersion: String { "\(UIDevice.current.systemName) \(UIDevice.current.systemVersion)" }
+    var hasMac: Bool { !discoveredMacs.isEmpty }
+
     func start() {
+        guard browser == nil else {
+            updateBattery()
+            return
+        }
+
         UIDevice.current.isBatteryMonitoringEnabled = true
         updateBattery()
 
-        NotificationCenter.default.addObserver(forName: UIDevice.batteryLevelDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
+        observers.append(NotificationCenter.default.addObserver(
+            forName: UIDevice.batteryLevelDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
             Task { @MainActor in self?.updateAndSend() }
-        }
-        NotificationCenter.default.addObserver(forName: UIDevice.batteryStateDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
+        })
+
+        observers.append(NotificationCenter.default.addObserver(
+            forName: UIDevice.batteryStateDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
             Task { @MainActor in self?.updateAndSend() }
-        }
+        })
 
         let browser = NWBrowser(for: .bonjour(type: "_airmate-mobile._tcp", domain: nil), using: .tcp)
+        browser.stateUpdateHandler = { [weak self] state in
+            Task { @MainActor in
+                guard let self else { return }
+                switch state {
+                case .ready, .failed, .cancelled:
+                    self.isSearching = false
+                default:
+                    self.isSearching = true
+                }
+            }
+        }
         browser.browseResultsChangedHandler = { [weak self] results, _ in
             Task { @MainActor in
                 guard let self else { return }
@@ -65,6 +98,7 @@ final class MobileReporter: ObservableObject {
                 }
                 self.endpoints = map
                 self.discoveredMacs = map.keys.sorted()
+                self.isSearching = false
                 self.sendNow()
             }
         }
@@ -77,6 +111,7 @@ final class MobileReporter: ObservableObject {
     }
 
     func sendNow() {
+        updateBattery()
         let payload = makePayload()
         guard let data = try? JSONEncoder().encode(payload) else { return }
         for endpoint in endpoints.values {
@@ -90,6 +125,7 @@ final class MobileReporter: ObservableObject {
             connection.start(queue: queue)
         }
         if !endpoints.isEmpty { lastSent = .now }
+        WidgetCenter.shared.reloadTimelines(ofKind: "AirMateMobileBatteryWidget")
     }
 
     private func updateAndSend() {
@@ -104,6 +140,7 @@ final class MobileReporter: ObservableObject {
         case .charging, .full: isCharging = true
         default: isCharging = false
         }
+        WidgetCenter.shared.reloadTimelines(ofKind: "AirMateMobileBatteryWidget")
     }
 
     private func makePayload() -> MobileDevicePayload {
@@ -129,45 +166,180 @@ final class MobileReporter: ObservableObject {
     }
 }
 
+struct MobileOverviewView: View {
+    @ObservedObject var reporter: MobileReporter
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 18) {
+                VStack(spacing: 12) {
+                    Image(systemName: UIDevice.current.userInterfaceIdiom == .pad ? "ipad" : "iphone.gen3")
+                        .font(.system(size: 54, weight: .medium))
+                        .symbolRenderingMode(.hierarchical)
+
+                    Text(reporter.deviceName)
+                        .font(.title2.bold())
+                        .multilineTextAlignment(.center)
+
+                    HStack(alignment: .firstTextBaseline, spacing: 5) {
+                        Text("\(reporter.batteryLevel)")
+                            .font(.system(size: 58, weight: .semibold, design: .rounded))
+                            .monospacedDigit()
+                        Text("%")
+                            .font(.title.bold())
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Label(
+                        reporter.isCharging ? "Charging" : "On Battery",
+                        systemImage: reporter.isCharging ? "bolt.fill" : "battery.75percent"
+                    )
+                    .foregroundStyle(reporter.isCharging ? .green : .secondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(24)
+                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+
+                HStack(spacing: 12) {
+                    StatusTile(
+                        title: "Mac Link",
+                        value: reporter.hasMac ? "Connected" : (reporter.isSearching ? "Searching" : "Not Found"),
+                        systemImage: reporter.hasMac ? "macmini.fill" : "macmini"
+                    )
+                    StatusTile(
+                        title: "Last Sync",
+                        value: reporter.lastSent?.formatted(date: .omitted, time: .shortened) ?? "Never",
+                        systemImage: "arrow.trianglehead.2.clockwise.rotate.90"
+                    )
+                }
+
+                Button {
+                    reporter.sendNow()
+                } label: {
+                    Label("Sync Battery Now", systemImage: "arrow.up.circle.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+
+                VStack(alignment: .leading, spacing: 10) {
+                    Label("AirMate Widget", systemImage: "rectangle.grid.2x2.fill")
+                        .font(.headline)
+                    Text("Add the AirMate Batteries widget from the Home Screen widget gallery for quick battery status.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(18)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            }
+            .padding()
+        }
+        .navigationTitle("AirMate")
+    }
+}
+
+private struct StatusTile: View {
+    let title: String
+    let value: String
+    let systemImage: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Image(systemName: systemImage)
+                .font(.title2)
+                .foregroundStyle(.tint)
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+        }
+        .frame(maxWidth: .infinity, minHeight: 104, alignment: .leading)
+        .padding(16)
+        .background(.quaternary, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+}
+
+struct NearbyMacsView: View {
+    @ObservedObject var reporter: MobileReporter
+
+    var body: some View {
+        List {
+            Section {
+                if reporter.discoveredMacs.isEmpty {
+                    ContentUnavailableView(
+                        "No AirMate Mac Found",
+                        systemImage: "macmini",
+                        description: Text("Keep AirMate running on your Mac and make sure both devices are on the same local network.")
+                    )
+                } else {
+                    ForEach(reporter.discoveredMacs, id: \.self) { mac in
+                        HStack(spacing: 14) {
+                            Image(systemName: "macmini.fill")
+                                .font(.title2)
+                                .foregroundStyle(.tint)
+                            VStack(alignment: .leading) {
+                                Text(mac).font(.headline)
+                                Text("AirMate available")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                        }
+                    }
+                }
+            } header: {
+                Text("Nearby Macs")
+            }
+
+            Section {
+                Button("Send Battery Now") { reporter.sendNow() }
+            }
+        }
+        .navigationTitle("Macs")
+    }
+}
+
+struct MobileSettingsView: View {
+    @ObservedObject var reporter: MobileReporter
+
+    var body: some View {
+        List {
+            Section("This Device") {
+                LabeledContent("Name", value: reporter.deviceName)
+                LabeledContent("Model", value: reporter.modelName)
+                LabeledContent("Software", value: reporter.osVersion)
+            }
+            Section("About AirMate Mobile") {
+                Text("AirMate Mobile securely reports this iPhone or iPad battery state to AirMate Macs discovered on your local network. No AirMate cloud account is required for this beta.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .navigationTitle("Settings")
+    }
+}
+
 @main
 struct AirMateMobileApp: App {
     @StateObject private var reporter = MobileReporter()
 
     var body: some Scene {
         WindowGroup {
-            NavigationStack {
-                VStack(spacing: 22) {
-                    Image(systemName: "iphone.gen3")
-                        .font(.system(size: 60))
-                    Text("AirMate Mobile")
-                        .font(.title2.bold())
-                    Text("\(reporter.batteryLevel)%")
-                        .font(.system(size: 42, weight: .semibold, design: .rounded))
-                        .monospacedDigit()
-                    Label(reporter.isCharging ? "Charging" : "On Battery", systemImage: reporter.isCharging ? "bolt.fill" : "battery.75percent")
-                        .foregroundStyle(.secondary)
+            TabView {
+                NavigationStack { MobileOverviewView(reporter: reporter) }
+                    .tabItem { Label("Overview", systemImage: "square.grid.2x2.fill") }
 
-                    GroupBox("Nearby AirMate Macs") {
-                        if reporter.discoveredMacs.isEmpty {
-                            Text("No AirMate Mac discovered yet.")
-                                .foregroundStyle(.secondary)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        } else {
-                            ForEach(reporter.discoveredMacs, id: \.self) { Text($0).frame(maxWidth: .infinity, alignment: .leading) }
-                        }
-                    }
+                NavigationStack { NearbyMacsView(reporter: reporter) }
+                    .tabItem { Label("Macs", systemImage: "macmini") }
 
-                    Button("Send Battery Now") { reporter.sendNow() }
-                        .buttonStyle(.borderedProminent)
-                    if let lastSent = reporter.lastSent {
-                        Text("Last sent \(lastSent.formatted(date: .omitted, time: .standard))")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                }
-                .padding()
-                .navigationTitle("AirMate")
+                NavigationStack { MobileSettingsView(reporter: reporter) }
+                    .tabItem { Label("Settings", systemImage: "gearshape") }
             }
             .task { reporter.start() }
         }
