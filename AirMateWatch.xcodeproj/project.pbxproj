@@ -1,0 +1,47 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {};
+	objectVersion = 56;
+	objects = {
+/* Begin PBXBuildFile section */
+		B10000000000000000000001 /* AirMateWatchApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000001 /* AirMateWatchApp.swift */; };
+/* End PBXBuildFile section */
+/* Begin PBXFileReference section */
+		B20000000000000000000001 /* AirMateWatchApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AirMateWatchApp.swift; sourceTree = "<group>"; };
+		B20000000000000000000002 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		B20000000000000000000003 /* AirMateWatch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AirMateWatch.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+/* Begin PBXFrameworksBuildPhase section */
+		B30000000000000000000001 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXFrameworksBuildPhase section */
+/* Begin PBXGroup section */
+		B40000000000000000000001 = {isa = PBXGroup; children = (B40000000000000000000002 /* AirMateWatch */, B40000000000000000000003 /* Products */,); sourceTree = "<group>"; };
+		B40000000000000000000002 /* AirMateWatch */ = {isa = PBXGroup; children = (B20000000000000000000001 /* AirMateWatchApp.swift */, B20000000000000000000002 /* Info.plist */,); path = AirMateWatch; sourceTree = "<group>"; };
+		B40000000000000000000003 /* Products */ = {isa = PBXGroup; children = (B20000000000000000000003 /* AirMateWatch.app */,); name = Products; sourceTree = "<group>"; };
+/* End PBXGroup section */
+/* Begin PBXNativeTarget section */
+		B50000000000000000000001 /* AirMateWatch */ = {isa = PBXNativeTarget; buildConfigurationList = B80000000000000000000002; buildPhases = (B60000000000000000000001 /* Sources */, B30000000000000000000001 /* Frameworks */, B60000000000000000000002 /* Resources */,); buildRules = (); dependencies = (); name = AirMateWatch; productName = AirMateWatch; productReference = B20000000000000000000003 /* AirMateWatch.app */; productType = "com.apple.product-type.application.watchapp2"; };
+/* End PBXNativeTarget section */
+/* Begin PBXProject section */
+		B70000000000000000000001 /* Project object */ = {isa = PBXProject; attributes = {BuildIndependentTargetsInParallel = 1; LastSwiftUpdateCheck = 2700; LastUpgradeCheck = 2700; TargetAttributes = {B50000000000000000000001 = {CreatedOnToolsVersion = 27.0;};};}; buildConfigurationList = B80000000000000000000001; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base,); mainGroup = B40000000000000000000001; productRefGroup = B40000000000000000000003; projectDirPath = ""; projectRoot = ""; targets = (B50000000000000000000001 /* AirMateWatch */,); };
+/* End PBXProject section */
+/* Begin PBXResourcesBuildPhase section */
+		B60000000000000000000002 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXResourcesBuildPhase section */
+/* Begin PBXSourcesBuildPhase section */
+		B60000000000000000000001 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (B10000000000000000000001 /* AirMateWatchApp.swift in Sources */,); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXSourcesBuildPhase section */
+/* Begin XCBuildConfiguration section */
+		B90000000000000000000001 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {CLANG_ENABLE_MODULES = YES; SDKROOT = watchos; SWIFT_VERSION = 6.0; WATCHOS_DEPLOYMENT_TARGET = 26.0;}; name = Debug; };
+		B90000000000000000000002 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {CLANG_ENABLE_MODULES = YES; SDKROOT = watchos; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_OPTIMIZATION_LEVEL = "-O"; SWIFT_VERSION = 6.0; WATCHOS_DEPLOYMENT_TARGET = 26.0;}; name = Release; };
+		B90000000000000000000003 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = AirMateWatch/Info.plist; MARKETING_VERSION = 0.5.0; PRODUCT_BUNDLE_IDENTIFIER = com.almosawi.airmate.watch; PRODUCT_NAME = "$(TARGET_NAME)"; SKIP_INSTALL = NO; SWIFT_STRICT_CONCURRENCY = targeted;}; name = Debug; };
+		B90000000000000000000004 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = AirMateWatch/Info.plist; MARKETING_VERSION = 0.5.0; PRODUCT_BUNDLE_IDENTIFIER = com.almosawi.airmate.watch; PRODUCT_NAME = "$(TARGET_NAME)"; SKIP_INSTALL = NO; SWIFT_STRICT_CONCURRENCY = targeted;}; name = Release; };
+/* End XCBuildConfiguration section */
+/* Begin XCConfigurationList section */
+		B80000000000000000000001 = {isa = XCConfigurationList; buildConfigurations = (B90000000000000000000001 /* Debug */, B90000000000000000000002 /* Release */,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		B80000000000000000000002 = {isa = XCConfigurationList; buildConfigurations = (B90000000000000000000003 /* Debug */, B90000000000000000000004 /* Release */,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+/* End XCConfigurationList section */
+	};
+	rootObject = B70000000000000000000001 /* Project object */;
+}
