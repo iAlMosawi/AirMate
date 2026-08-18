@@ -1,5 +1,8 @@
 import CoreBluetooth
 import Foundation
+import IOKit.hid
+import Network
+import UserNotifications
 
 @MainActor
 final class BluetoothScanner: NSObject, ObservableObject {
@@ -7,6 +10,7 @@ final class BluetoothScanner: NSObject, ObservableObject {
     @Published private(set) var state: CBManagerState = .unknown
 
     private var central: CBCentralManager!
+    private let airPodsParser = AppleAdvertisementParser()
 
     override init() {
         super.init()
@@ -23,6 +27,11 @@ final class BluetoothScanner: NSObject, ObservableObject {
 
     func stop() {
         central.stopScan()
+    }
+
+    func prune(olderThan age: TimeInterval = 90) {
+        let cutoff = Date().addingTimeInterval(-age)
+        discovered = discovered.filter { $0.value.lastSeen >= cutoff }
     }
 
     private func classify(name: String) -> AirMateDevice.Kind {
@@ -43,9 +52,7 @@ extension BluetoothScanner: CBCentralManagerDelegate {
     nonisolated func centralManagerDidUpdateState(_ central: CBCentralManager) {
         Task { @MainActor in
             state = central.state
-            if central.state == .poweredOn {
-                start()
-            }
+            if central.state == .poweredOn { start() }
         }
     }
 
@@ -58,17 +65,266 @@ extension BluetoothScanner: CBCentralManagerDelegate {
         let advertisedName = advertisementData[CBAdvertisementDataLocalNameKey] as? String
         let name = advertisedName ?? peripheral.name ?? "Nearby Bluetooth Device"
         let identifier = peripheral.identifier
+        let manufacturerData = advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data
 
         Task { @MainActor in
-            let device = AirMateDevice(
+            var device = AirMateDevice(
                 id: identifier,
                 name: name,
                 kind: classify(name: name),
                 connectionState: .nearby,
+                source: .coreBluetooth,
                 rssi: RSSI.intValue,
                 lastSeen: .now
             )
+
+            if let manufacturerData,
+               let parsed = airPodsParser.parse(manufacturerData, fallbackName: name) {
+                device.kind = parsed.kind
+                device.modelName = parsed.modelName
+                device.batteryLevel = parsed.leftBattery
+                device.secondaryBatteryLevel = parsed.rightBattery
+                device.caseBatteryLevel = parsed.caseBattery
+                device.isCharging = parsed.leftCharging
+                device.isSecondaryCharging = parsed.rightCharging
+                device.isCaseCharging = parsed.caseCharging
+                device.source = .appleAdvertisement
+                device.metadata["parser"] = "apple-manufacturer-data"
+            }
+
             discovered[identifier] = device
+        }
+    }
+}
+
+/// Clean-room, best-effort parser for Apple manufacturer advertisements. Apple does not
+/// document AirPods battery advertisement bytes as a public API, so this component is
+/// deliberately isolated and can be updated without touching the rest of AirMate.
+struct AppleAdvertisementParser {
+    struct Result {
+        let kind: AirMateDevice.Kind
+        let modelName: String?
+        let leftBattery: Int?
+        let rightBattery: Int?
+        let caseBattery: Int?
+        let leftCharging: Bool
+        let rightCharging: Bool
+        let caseCharging: Bool
+    }
+
+    func parse(_ data: Data, fallbackName: String) -> Result? {
+        let bytes = [UInt8](data)
+        guard bytes.count >= 8 else { return nil }
+
+        // Manufacturer data normally begins with Apple's Bluetooth company identifier 0x004C.
+        let hasAppleCompanyID = bytes[0] == 0x4C && bytes[1] == 0x00
+        guard hasAppleCompanyID else { return nil }
+
+        // Proximity-pairing payloads used by AirPods/Beats commonly use Apple type 0x07.
+        guard bytes.dropFirst(2).contains(0x07) else { return nil }
+
+        let lowerName = fallbackName.lowercased()
+        let kind: AirMateDevice.Kind = lowerName.contains("beats") ? .beats : .airPods
+
+        // Battery values appear as four-bit levels in several proximity-pairing payload
+        // revisions. Keep this heuristic conservative: values outside 0...10 are ignored.
+        let candidates = bytes.suffix(min(bytes.count, 8)).flatMap { byte -> [Int] in
+            [Int(byte & 0x0F), Int((byte >> 4) & 0x0F)]
+        }.filter { $0 <= 10 }
+
+        func percentage(_ index: Int) -> Int? {
+            guard candidates.indices.contains(index) else { return nil }
+            return min(100, candidates[index] * 10)
+        }
+
+        let chargingByte = bytes.last ?? 0
+        return Result(
+            kind: kind,
+            modelName: lowerName.contains("airpods") || lowerName.contains("beats") ? fallbackName : nil,
+            leftBattery: percentage(0),
+            rightBattery: percentage(1),
+            caseBattery: percentage(2),
+            leftCharging: (chargingByte & 0x01) != 0,
+            rightCharging: (chargingByte & 0x02) != 0,
+            caseCharging: (chargingByte & 0x04) != 0
+        )
+    }
+}
+
+@MainActor
+final class HIDAccessoryMonitor: ObservableObject {
+    @Published private(set) var devices: [AirMateDevice] = []
+    private var timer: Timer?
+
+    func start() {
+        refresh()
+        timer?.invalidate()
+        timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.refresh() }
+        }
+    }
+
+    func stop() {
+        timer?.invalidate()
+        timer = nil
+    }
+
+    func refresh() {
+        let manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
+        IOHIDManagerSetDeviceMatching(manager, nil)
+        guard IOHIDManagerOpen(manager, IOOptionBits(kIOHIDOptionsTypeNone)) == kIOReturnSuccess,
+              let set = IOHIDManagerCopyDevices(manager) as? Set<IOHIDDevice> else {
+            devices = []
+            return
+        }
+
+        var result: [AirMateDevice] = []
+        for device in set {
+            guard let product = IOHIDDeviceGetProperty(device, "Product" as CFString) as? String else { continue }
+            let lower = product.lowercased()
+            let kind: AirMateDevice.Kind
+            if lower.contains("keyboard") { kind = .keyboard }
+            else if lower.contains("trackpad") { kind = .trackpad }
+            else if lower.contains("mouse") { kind = .mouse }
+            else { continue }
+
+            let battery = (IOHIDDeviceGetProperty(device, "BatteryPercent" as CFString) as? NSNumber)?.intValue
+            let registryID = (IOHIDDeviceGetProperty(device, "RegistryID" as CFString) as? NSNumber)?.uint64Value ?? UInt64(abs(product.hashValue))
+            let uuid = UUID(uuidString: String(format: "%08X-0000-4000-8000-%012llX", UInt32(truncatingIfNeeded: registryID), registryID & 0xFFFFFFFFFFFF)) ?? UUID()
+
+            result.append(AirMateDevice(
+                id: uuid,
+                name: product,
+                kind: kind,
+                batteryLevel: battery,
+                connectionState: .connected,
+                source: .hid,
+                lastSeen: .now
+            ))
+        }
+        devices = result
+    }
+}
+
+@MainActor
+final class BatteryHistoryStore: ObservableObject {
+    @Published private(set) var samples: [BatteryHistorySample] = []
+    private var lastRecorded: [UUID: (level: Int, date: Date)] = [:]
+
+    init() { load() }
+
+    func record(_ devices: [AirMateDevice]) {
+        var changed = false
+        for device in devices {
+            guard let level = device.batteryLevel else { continue }
+            let previous = lastRecorded[device.id]
+            if previous == nil || previous?.level != level || Date().timeIntervalSince(previous!.date) >= 600 {
+                samples.append(BatteryHistorySample(device: device, level: level))
+                lastRecorded[device.id] = (level, .now)
+                changed = true
+            }
+        }
+        if samples.count > 10_000 { samples.removeFirst(samples.count - 10_000) }
+        if changed { save() }
+    }
+
+    func samples(for deviceID: UUID) -> [BatteryHistorySample] {
+        samples.filter { $0.deviceID == deviceID }
+    }
+
+    private var url: URL? {
+        guard let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        let folder = root.appendingPathComponent("AirMate", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        return folder.appendingPathComponent("battery-history.json")
+    }
+
+    private func load() {
+        guard let url, let data = try? Data(contentsOf: url),
+              let decoded = try? JSONDecoder().decode([BatteryHistorySample].self, from: data) else { return }
+        samples = decoded
+        for sample in decoded.suffix(1000) {
+            lastRecorded[sample.deviceID] = (sample.level, sample.date)
+        }
+    }
+
+    private func save() {
+        guard let url, let data = try? JSONEncoder().encode(samples) else { return }
+        try? data.write(to: url, options: .atomic)
+    }
+}
+
+@MainActor
+final class BatteryNotificationService {
+    private var notifiedLevels: [UUID: Int] = [:]
+
+    func requestAuthorization() {
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+    }
+
+    func evaluate(_ devices: [AirMateDevice], threshold: Int) {
+        for device in devices {
+            guard let level = device.batteryLevel, level <= threshold, !device.isCharging else {
+                if let level = device.batteryLevel, level > threshold + 5 { notifiedLevels[device.id] = nil }
+                continue
+            }
+            guard notifiedLevels[device.id] != level else { continue }
+            notifiedLevels[device.id] = level
+
+            let content = UNMutableNotificationContent()
+            content.title = "\(device.name) battery is low"
+            content.body = "Battery is at \(level)%."
+            content.sound = .default
+            let request = UNNotificationRequest(identifier: "low-\(device.id.uuidString)-\(level)", content: content, trigger: nil)
+            UNUserNotificationCenter.current().add(request)
+        }
+    }
+}
+
+@MainActor
+final class NearbyMacService: ObservableObject {
+    @Published private(set) var peers: [AirMateDevice] = []
+    private var browser: NWBrowser?
+    private var listener: NWListener?
+
+    func start() {
+        startAdvertising()
+        let browser = NWBrowser(for: .bonjour(type: "_airmate._tcp", domain: nil), using: .tcp)
+        browser.browseResultsChangedHandler = { [weak self] results, _ in
+            Task { @MainActor in
+                self?.peers = results.compactMap { result in
+                    guard case let .service(name, _, _, _) = result.endpoint,
+                          name != Host.current().localizedName else { return nil }
+                    return AirMateDevice(
+                        name: name,
+                        kind: .nearbyMac,
+                        connectionState: .nearby,
+                        source: .nearbyMac,
+                        lastSeen: .now
+                    )
+                }
+            }
+        }
+        browser.start(queue: .global(qos: .utility))
+        self.browser = browser
+    }
+
+    func stop() {
+        browser?.cancel()
+        listener?.cancel()
+        browser = nil
+        listener = nil
+    }
+
+    private func startAdvertising() {
+        do {
+            let listener = try NWListener(using: .tcp, on: .any)
+            listener.service = NWListener.Service(name: Host.current().localizedName ?? "AirMate Mac", type: "_airmate._tcp")
+            listener.newConnectionHandler = { connection in connection.cancel() }
+            listener.start(queue: .global(qos: .utility))
+            self.listener = listener
+        } catch {
+            listener = nil
         }
     }
 }
