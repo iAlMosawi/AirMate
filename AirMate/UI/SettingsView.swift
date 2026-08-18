@@ -1,3 +1,4 @@
+#if os(macOS)
 import Charts
 import SwiftUI
 
@@ -108,3 +109,4 @@ struct SettingsView: View {
         }
     }
 }
+#endif
