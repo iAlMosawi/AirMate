@@ -13,6 +13,7 @@ final class AppSettings: ObservableObject {
     @Published var nearbyMacsEnabled: Bool { didSet { save(nearbyMacsEnabled, "nearbyMacsEnabled") } }
     @Published var showSignalStrength: Bool { didSet { save(showSignalStrength, "showSignalStrength") } }
     @Published var launchAtLogin: Bool { didSet { save(launchAtLogin, "launchAtLogin"); updateLoginItem() } }
+    @Published private(set) var favoriteDeviceIDs: Set<String>
 
     init() {
         let defaults = UserDefaults.standard
@@ -25,6 +26,21 @@ final class AppSettings: ObservableObject {
         nearbyMacsEnabled = defaults.object(forKey: "nearbyMacsEnabled") as? Bool ?? true
         showSignalStrength = defaults.object(forKey: "showSignalStrength") as? Bool ?? true
         launchAtLogin = defaults.object(forKey: "launchAtLogin") as? Bool ?? false
+        favoriteDeviceIDs = Set(defaults.stringArray(forKey: "favoriteDeviceIDs") ?? [])
+    }
+
+    func isFavorite(_ id: UUID) -> Bool {
+        favoriteDeviceIDs.contains(id.uuidString)
+    }
+
+    func toggleFavorite(_ id: UUID) {
+        let key = id.uuidString
+        if favoriteDeviceIDs.contains(key) {
+            favoriteDeviceIDs.remove(key)
+        } else {
+            favoriteDeviceIDs.insert(key)
+        }
+        UserDefaults.standard.set(Array(favoriteDeviceIDs).sorted(), forKey: "favoriteDeviceIDs")
     }
 
     private func save(_ value: Any, _ key: String) { UserDefaults.standard.set(value, forKey: key) }
