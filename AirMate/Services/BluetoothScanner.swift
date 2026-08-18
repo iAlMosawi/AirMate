@@ -173,9 +173,10 @@ final class HIDAccessoryMonitor: ObservableObject {
             return
         }
 
-        let hidDevices = (deviceSet as NSSet).allObjects.compactMap { $0 as? IOHIDDevice }
+        let hidObjects = (deviceSet as NSSet).allObjects
         var result: [AirMateDevice] = []
-        for device in hidDevices {
+        for object in hidObjects {
+            let device = unsafeBitCast(object as AnyObject, to: IOHIDDevice.self)
             guard let product = IOHIDDeviceGetProperty(device, "Product" as CFString) as? String else { continue }
             let lower = product.lowercased()
             let kind: AirMateDevice.Kind
