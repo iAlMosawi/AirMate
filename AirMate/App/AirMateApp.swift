@@ -1,3 +1,4 @@
+import AppIntents
 import SwiftUI
 
 @main
@@ -10,9 +11,9 @@ struct AirMateApp: App {
             MenuBarView()
                 .environmentObject(deviceStore)
                 .environmentObject(appSettings)
-                .frame(width: 360)
+                .frame(width: 380)
                 .task {
-                    deviceStore.start()
+                    deviceStore.start(settings: appSettings)
                 }
         } label: {
             Label("AirMate", systemImage: "airpodspro")
@@ -22,7 +23,18 @@ struct AirMateApp: App {
         Settings {
             SettingsView()
                 .environmentObject(appSettings)
-                .frame(width: 520, height: 380)
+                .environmentObject(deviceStore)
+                .frame(width: 580, height: 500)
         }
+    }
+}
+
+struct RefreshAirMateIntent: AppIntent {
+    static var title: LocalizedStringResource = "Refresh AirMate Devices"
+    static var description = IntentDescription("Opens AirMate so its nearby device information can refresh.")
+    static var openAppWhenRun = true
+
+    func perform() async throws -> some IntentResult {
+        .result(dialog: "AirMate is ready.")
     }
 }
