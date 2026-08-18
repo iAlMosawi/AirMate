@@ -20,6 +20,10 @@ struct SettingsView: View {
                 Toggle("Show connection HUD", isOn: $settings.showConnectionHUD)
                 Toggle("Show signal strength", isOn: $settings.showSignalStrength)
                 Toggle("Discover nearby Macs running AirMate", isOn: $settings.nearbyMacsEnabled)
+                LabeledContent("Pinned devices", value: "\(settings.favoriteDeviceIDs.count)")
+                Text("Use the star button on a device card to keep important devices at the top of AirMate.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Battery") {
@@ -94,9 +98,17 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section("Diagnostics") {
+                LabeledContent("Bluetooth", value: store.bluetoothStateText)
+                LabeledContent("Devices visible", value: "\(store.devices.count)")
+                LabeledContent("Battery-capable", value: "\(store.devices.filter { $0.hasAnyBattery }.count)")
+                LabeledContent("Nearby Mac sharing", value: settings.nearbyMacsEnabled ? "Enabled" : "Disabled")
+                Button("Refresh all device services") { store.refresh() }
+            }
+
             Section("About") {
                 LabeledContent("Application", value: "AirMate")
-                LabeledContent("Version", value: "0.5.0 beta")
+                LabeledContent("Version", value: "0.6.0 beta")
                 LabeledContent("Minimum macOS", value: "26.0")
                 LabeledContent("Bundle ID", value: "com.almosawi.airmate")
             }
