@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 import Combine
 import Foundation
@@ -373,3 +374,4 @@ final class NearbyDeviceExchange: ObservableObject {
         return UUID(uuid: tuple)
     }
 }
+#endif
