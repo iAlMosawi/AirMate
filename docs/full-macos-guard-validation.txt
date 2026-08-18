@@ -1,0 +1,1 @@
+Validate unified AirMate project after making the entire macOS source tree platform-isolated.
