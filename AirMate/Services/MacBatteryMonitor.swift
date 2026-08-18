@@ -1,3 +1,4 @@
+#if os(macOS)
 import Combine
 import CoreAudio
 import Foundation
@@ -140,3 +141,4 @@ final class AudioDeviceService: ObservableObject {
         return name as String
     }
 }
+#endif
