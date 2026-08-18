@@ -1,0 +1,1 @@
+Validate explicit macOS-only target platform metadata after fixing undefined _main when iOS simulator is selected.
