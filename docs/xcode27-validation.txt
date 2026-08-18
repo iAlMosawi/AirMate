@@ -1,0 +1,1 @@
+Validate AirMate with GitHub Actions xcode-27 runner.
