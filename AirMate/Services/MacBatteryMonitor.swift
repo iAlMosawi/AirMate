@@ -134,9 +134,9 @@ final class AudioDeviceService: ObservableObject {
             mScope: kAudioObjectPropertyScopeGlobal,
             mElement: kAudioObjectPropertyElementMain
         )
-        var name: CFString? = nil
-        var size = UInt32(MemoryLayout<CFString?>.size)
+        var name: CFString = "" as CFString
+        var size = UInt32(MemoryLayout<CFString>.size)
         guard AudioObjectGetPropertyData(id, &address, 0, nil, &size, &name) == noErr else { return nil }
-        return name as String?
+        return name as String
     }
 }
