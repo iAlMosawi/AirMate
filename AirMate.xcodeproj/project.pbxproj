@@ -16,7 +16,31 @@
 		100000000000000000000008 /* DeviceCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000008 /* DeviceCard.swift */; };
 		100000000000000000000009 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000009 /* SettingsView.swift */; };
 		10000000000000000000000A /* DeviceHUDView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000A /* DeviceHUDView.swift */; };
+		10000000000000000000000B /* AirMateWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000D /* AirMateWidget.swift */; };
+		10000000000000000000000C /* AirMateWidget.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000F /* AirMateWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		A00000000000000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 700000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 500000000000000000000002;
+			remoteInfo = AirMateWidget;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		600000000000000000000005 /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (10000000000000000000000C /* AirMateWidget.appex in Embed App Extensions */,);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		200000000000000000000001 /* AirMateApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AirMateApp.swift; sourceTree = "<group>"; };
@@ -31,15 +55,14 @@
 		20000000000000000000000A /* DeviceHUDView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceHUDView.swift; sourceTree = "<group>"; };
 		20000000000000000000000B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		20000000000000000000000C /* AirMate.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AirMate.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		20000000000000000000000D /* AirMateWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AirMateWidget.swift; sourceTree = "<group>"; };
+		20000000000000000000000E /* Widget Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		20000000000000000000000F /* AirMateWidget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = AirMateWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
-		300000000000000000000001 /* Frameworks */ = {
-			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
-			files = ();
-			runOnlyForDeploymentPostprocessing = 0;
-		};
+		300000000000000000000001 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		300000000000000000000002 /* Widget Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -47,6 +70,7 @@
 			isa = PBXGroup;
 			children = (
 				400000000000000000000002 /* AirMate */,
+				400000000000000000000009 /* AirMateWidget */,
 				400000000000000000000008 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -63,71 +87,37 @@
 			path = AirMate;
 			sourceTree = "<group>";
 		};
-		400000000000000000000003 /* App */ = {
-			isa = PBXGroup;
-			children = (200000000000000000000001 /* AirMateApp.swift */,);
-			path = App;
-			sourceTree = "<group>";
-		};
-		400000000000000000000004 /* Models */ = {
-			isa = PBXGroup;
-			children = (
-				200000000000000000000002 /* Device.swift */,
-				200000000000000000000003 /* AppSettings.swift */,
-				200000000000000000000004 /* DeviceStore.swift */,
-			);
-			path = Models;
-			sourceTree = "<group>";
-		};
-		400000000000000000000005 /* Services */ = {
-			isa = PBXGroup;
-			children = (
-				200000000000000000000005 /* BluetoothScanner.swift */,
-				200000000000000000000006 /* MacBatteryMonitor.swift */,
-			);
-			path = Services;
-			sourceTree = "<group>";
-		};
-		400000000000000000000006 /* UI */ = {
-			isa = PBXGroup;
-			children = (
-				200000000000000000000007 /* MenuBarView.swift */,
-				200000000000000000000008 /* DeviceCard.swift */,
-				200000000000000000000009 /* SettingsView.swift */,
-				20000000000000000000000A /* DeviceHUDView.swift */,
-			);
-			path = UI;
-			sourceTree = "<group>";
-		};
-		400000000000000000000007 /* Resources */ = {
-			isa = PBXGroup;
-			children = (20000000000000000000000B /* Info.plist */,);
-			path = Resources;
-			sourceTree = "<group>";
-		};
-		400000000000000000000008 /* Products */ = {
-			isa = PBXGroup;
-			children = (20000000000000000000000C /* AirMate.app */,);
-			name = Products;
-			sourceTree = "<group>";
-		};
+		400000000000000000000003 /* App */ = {isa = PBXGroup; children = (200000000000000000000001 /* AirMateApp.swift */,); path = App; sourceTree = "<group>"; };
+		400000000000000000000004 /* Models */ = {isa = PBXGroup; children = (200000000000000000000002 /* Device.swift */, 200000000000000000000003 /* AppSettings.swift */, 200000000000000000000004 /* DeviceStore.swift */,); path = Models; sourceTree = "<group>"; };
+		400000000000000000000005 /* Services */ = {isa = PBXGroup; children = (200000000000000000000005 /* BluetoothScanner.swift */, 200000000000000000000006 /* MacBatteryMonitor.swift */,); path = Services; sourceTree = "<group>"; };
+		400000000000000000000006 /* UI */ = {isa = PBXGroup; children = (200000000000000000000007 /* MenuBarView.swift */, 200000000000000000000008 /* DeviceCard.swift */, 200000000000000000000009 /* SettingsView.swift */, 20000000000000000000000A /* DeviceHUDView.swift */,); path = UI; sourceTree = "<group>"; };
+		400000000000000000000007 /* Resources */ = {isa = PBXGroup; children = (20000000000000000000000B /* Info.plist */,); path = Resources; sourceTree = "<group>"; };
+		400000000000000000000008 /* Products */ = {isa = PBXGroup; children = (20000000000000000000000C /* AirMate.app */, 20000000000000000000000F /* AirMateWidget.appex */,); name = Products; sourceTree = "<group>"; };
+		400000000000000000000009 /* AirMateWidget */ = {isa = PBXGroup; children = (20000000000000000000000D /* AirMateWidget.swift */, 20000000000000000000000E /* Widget Info.plist */,); path = AirMateWidget; sourceTree = "<group>"; };
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
 		500000000000000000000001 /* AirMate */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 800000000000000000000002 /* Build configuration list for PBXNativeTarget "AirMate" */;
-			buildPhases = (
-				600000000000000000000001 /* Sources */,
-				300000000000000000000001 /* Frameworks */,
-				600000000000000000000002 /* Resources */,
-			);
+			buildPhases = (600000000000000000000001 /* Sources */, 300000000000000000000001 /* Frameworks */, 600000000000000000000002 /* Resources */, 600000000000000000000005 /* Embed App Extensions */,);
 			buildRules = ();
-			dependencies = ();
+			dependencies = (A00000000000000000000002 /* PBXTargetDependency */,);
 			name = AirMate;
 			productName = AirMate;
 			productReference = 20000000000000000000000C /* AirMate.app */;
 			productType = "com.apple.product-type.application";
+		};
+		500000000000000000000002 /* AirMateWidget */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 800000000000000000000003 /* Build configuration list for PBXNativeTarget "AirMateWidget" */;
+			buildPhases = (600000000000000000000003 /* Widget Sources */, 300000000000000000000002 /* Widget Frameworks */, 600000000000000000000004 /* Widget Resources */,);
+			buildRules = ();
+			dependencies = ();
+			name = AirMateWidget;
+			productName = AirMateWidget;
+			productReference = 20000000000000000000000F /* AirMateWidget.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -140,6 +130,7 @@
 				LastUpgradeCheck = 2700;
 				TargetAttributes = {
 					500000000000000000000001 = { CreatedOnToolsVersion = 27.0; };
+					500000000000000000000002 = { CreatedOnToolsVersion = 27.0; };
 				};
 			};
 			buildConfigurationList = 800000000000000000000001 /* Build configuration list for PBXProject "AirMate" */;
@@ -151,17 +142,13 @@
 			productRefGroup = 400000000000000000000008 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
-			targets = (500000000000000000000001 /* AirMate */,);
+			targets = (500000000000000000000001 /* AirMate */, 500000000000000000000002 /* AirMateWidget */,);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
-		600000000000000000000002 /* Resources */ = {
-			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = ();
-			runOnlyForDeploymentPostprocessing = 0;
-		};
+		600000000000000000000002 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		600000000000000000000004 /* Widget Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -182,86 +169,26 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		600000000000000000000003 /* Widget Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (10000000000000000000000B /* AirMateWidget.swift in Sources */,); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 
+/* Begin PBXTargetDependency section */
+		A00000000000000000000002 /* PBXTargetDependency */ = {isa = PBXTargetDependency; target = 500000000000000000000002 /* AirMateWidget */; targetProxy = A00000000000000000000001 /* PBXContainerItemProxy */; };
+/* End PBXTargetDependency section */
+
 /* Begin XCBuildConfiguration section */
-		900000000000000000000001 /* Debug */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CLANG_ENABLE_MODULES = YES;
-				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				SDKROOT = macosx;
-				SWIFT_VERSION = 6.0;
-			};
-			name = Debug;
-		};
-		900000000000000000000002 /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CLANG_ENABLE_MODULES = YES;
-				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				SDKROOT = macosx;
-				SWIFT_COMPILATION_MODE = wholemodule;
-				SWIFT_OPTIMIZATION_LEVEL = "-O";
-				SWIFT_VERSION = 6.0;
-			};
-			name = Release;
-		};
-		900000000000000000000003 /* Debug */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEAD_CODE_STRIPPING = YES;
-				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = AirMate/Resources/Info.plist;
-				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
-				MARKETING_VERSION = 0.1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.almosawi.airmate;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_STRICT_CONCURRENCY = complete;
-			};
-			name = Debug;
-		};
-		900000000000000000000004 /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEAD_CODE_STRIPPING = YES;
-				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = AirMate/Resources/Info.plist;
-				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
-				MARKETING_VERSION = 0.1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.almosawi.airmate;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_STRICT_CONCURRENCY = complete;
-			};
-			name = Release;
-		};
+		900000000000000000000001 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {CLANG_ENABLE_MODULES = YES; MACOSX_DEPLOYMENT_TARGET = 26.0; SDKROOT = macosx; SWIFT_VERSION = 6.0;}; name = Debug; };
+		900000000000000000000002 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {CLANG_ENABLE_MODULES = YES; MACOSX_DEPLOYMENT_TARGET = 26.0; SDKROOT = macosx; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_OPTIMIZATION_LEVEL = "-O"; SWIFT_VERSION = 6.0;}; name = Release; };
+		900000000000000000000003 /* App Debug */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; DEAD_CODE_STRIPPING = YES; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = AirMate/Resources/Info.plist; LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks"; MARKETING_VERSION = 0.5.0; PRODUCT_BUNDLE_IDENTIFIER = com.almosawi.airmate; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_STRICT_CONCURRENCY = complete;}; name = Debug; };
+		900000000000000000000004 /* App Release */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; DEAD_CODE_STRIPPING = YES; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = AirMate/Resources/Info.plist; LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks"; MARKETING_VERSION = 0.5.0; PRODUCT_BUNDLE_IDENTIFIER = com.almosawi.airmate; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_STRICT_CONCURRENCY = complete;}; name = Release; };
+		900000000000000000000005 /* Widget Debug */ = {isa = XCBuildConfiguration; buildSettings = {APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = AirMateWidget/Info.plist; LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks @executable_path/../../../../Frameworks"; MARKETING_VERSION = 0.5.0; PRODUCT_BUNDLE_IDENTIFIER = com.almosawi.airmate.widget; PRODUCT_NAME = "$(TARGET_NAME)"; SKIP_INSTALL = YES; SWIFT_STRICT_CONCURRENCY = complete;}; name = Debug; };
+		900000000000000000000006 /* Widget Release */ = {isa = XCBuildConfiguration; buildSettings = {APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = AirMateWidget/Info.plist; LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks @executable_path/../../../../Frameworks"; MARKETING_VERSION = 0.5.0; PRODUCT_BUNDLE_IDENTIFIER = com.almosawi.airmate.widget; PRODUCT_NAME = "$(TARGET_NAME)"; SKIP_INSTALL = YES; SWIFT_STRICT_CONCURRENCY = complete;}; name = Release; };
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		800000000000000000000001 /* Build configuration list for PBXProject "AirMate" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				900000000000000000000001 /* Debug */,
-				900000000000000000000002 /* Release */,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
-		};
-		800000000000000000000002 /* Build configuration list for PBXNativeTarget "AirMate" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				900000000000000000000003 /* Debug */,
-				900000000000000000000004 /* Release */,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
-		};
+		800000000000000000000001 /* Project config */ = {isa = XCConfigurationList; buildConfigurations = (900000000000000000000001 /* Debug */, 900000000000000000000002 /* Release */,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		800000000000000000000002 /* App config */ = {isa = XCConfigurationList; buildConfigurations = (900000000000000000000003 /* App Debug */, 900000000000000000000004 /* App Release */,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		800000000000000000000003 /* Widget config */ = {isa = XCConfigurationList; buildConfigurations = (900000000000000000000005 /* Widget Debug */, 900000000000000000000006 /* Widget Release */,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
 /* End XCConfigurationList section */
 	};
 	rootObject = 700000000000000000000001 /* Project object */;
