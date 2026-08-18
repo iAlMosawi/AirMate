@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import Foundation
+import SwiftUI
 
 @MainActor
 final class DeviceStore: ObservableObject {
@@ -19,6 +20,7 @@ final class DeviceStore: ObservableObject {
     private var hasStarted = false
     private var pruneTimer: Timer?
     private var settings: AppSettings?
+    private let hud = DeviceHUDController()
 
     init() {
         Publishers.CombineLatest4(
@@ -93,6 +95,10 @@ final class DeviceStore: ObservableObject {
         history.samples(for: device.id)
     }
 
+    func setNearbyMacsEnabled(_ enabled: Bool) {
+        if enabled { nearbyMacs.start() } else { nearbyMacs.stop() }
+    }
+
     private func rebuildDevices(
         discovered: [UUID: AirMateDevice],
         macLevel: Int?,
@@ -100,6 +106,7 @@ final class DeviceStore: ObservableObject {
         hid: [AirMateDevice],
         peers: [AirMateDevice]
     ) {
+        let previous = Dictionary(uniqueKeysWithValues: devices.map { ($0.id, $0) })
         var result: [AirMateDevice] = []
         let localMacID = UUID(uuidString: "A1A1A1A1-0000-4000-8000-000000000001")!
         result.append(AirMateDevice(
@@ -132,6 +139,55 @@ final class DeviceStore: ObservableObject {
         if settings?.batteryHistoryEnabled != false { history.record(result) }
         if settings?.batteryAlertsEnabled != false {
             notifications.evaluate(result, threshold: settings?.lowBatteryThreshold ?? 20)
+        }
+
+        if settings?.showConnectionHUD != false,
+           let newHeadset = result.first(where: { device in
+               (device.kind == .airPods || device.kind == .beats) && previous[device.id] == nil
+           }) {
+            hud.show(device: newHeadset)
+        }
+    }
+}
+
+@MainActor
+final class DeviceHUDController {
+    private var panel: NSPanel?
+    private var dismissTask: Task<Void, Never>?
+
+    func show(device: AirMateDevice) {
+        dismissTask?.cancel()
+
+        let hosting = NSHostingView(rootView: DeviceHUDView(device: device))
+        hosting.frame = NSRect(x: 0, y: 0, width: 390, height: 150)
+
+        let panel = self.panel ?? NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 390, height: 150),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = false
+        panel.level = .floating
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.contentView = hosting
+
+        if let screen = NSScreen.main {
+            let frame = screen.visibleFrame
+            let x = frame.maxX - panel.frame.width - 24
+            let y = frame.maxY - panel.frame.height - 24
+            panel.setFrameOrigin(NSPoint(x: x, y: y))
+        }
+
+        panel.orderFrontRegardless()
+        self.panel = panel
+
+        dismissTask = Task { [weak panel] in
+            try? await Task.sleep(for: .seconds(4))
+            guard !Task.isCancelled else { return }
+            await MainActor.run { panel?.orderOut(nil) }
         }
     }
 }
