@@ -1,0 +1,1 @@
+Validate AirMate branding, app icon catalogs, ecosystem device aggregation, and simulator battery handling.
