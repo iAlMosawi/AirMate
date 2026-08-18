@@ -12,6 +12,8 @@ final class AppSettings: ObservableObject {
     @Published var batteryHistoryEnabled: Bool { didSet { save(batteryHistoryEnabled, "batteryHistoryEnabled") } }
     @Published var nearbyMacsEnabled: Bool { didSet { save(nearbyMacsEnabled, "nearbyMacsEnabled") } }
     @Published var showSignalStrength: Bool { didSet { save(showSignalStrength, "showSignalStrength") } }
+    @Published var hideDisconnectedDevices: Bool { didSet { save(hideDisconnectedDevices, "hideDisconnectedDevices") } }
+    @Published var showBatteryDevicesOnly: Bool { didSet { save(showBatteryDevicesOnly, "showBatteryDevicesOnly") } }
     @Published var launchAtLogin: Bool { didSet { save(launchAtLogin, "launchAtLogin"); updateLoginItem() } }
     @Published private(set) var favoriteDeviceIDs: Set<String>
 
@@ -25,6 +27,8 @@ final class AppSettings: ObservableObject {
         batteryHistoryEnabled = defaults.object(forKey: "batteryHistoryEnabled") as? Bool ?? true
         nearbyMacsEnabled = defaults.object(forKey: "nearbyMacsEnabled") as? Bool ?? true
         showSignalStrength = defaults.object(forKey: "showSignalStrength") as? Bool ?? true
+        hideDisconnectedDevices = defaults.object(forKey: "hideDisconnectedDevices") as? Bool ?? false
+        showBatteryDevicesOnly = defaults.object(forKey: "showBatteryDevicesOnly") as? Bool ?? false
         launchAtLogin = defaults.object(forKey: "launchAtLogin") as? Bool ?? false
         favoriteDeviceIDs = Set(defaults.stringArray(forKey: "favoriteDeviceIDs") ?? [])
     }
