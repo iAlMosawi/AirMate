@@ -1,4 +1,5 @@
 @preconcurrency import Network
+import AVFAudio
 import SwiftUI
 import UIKit
 import WidgetKit
@@ -50,14 +51,16 @@ struct EcosystemItem: Identifiable {
 final class MobileReporter: ObservableObject {
     @Published private(set) var batteryLevel: Int?
     @Published private(set) var isCharging = false
-    @Published private(set) var discoveredMacs: [String] = []
+    @Published private(set) var discoveredPeers: [String] = []
     @Published private(set) var ecosystemItems: [EcosystemItem] = []
+    @Published private(set) var connectedBluetoothAudio: [MobileDevicePayload] = []
     @Published private(set) var lastSent: Date?
     @Published private(set) var lastEcosystemRefresh: Date?
     @Published private(set) var isSearching = true
 
     private var bridgeBrowser: NWBrowser?
     private var ecosystemBrowser: NWBrowser?
+    private var ecosystemListener: NWListener?
     private var bridgeEndpoints: [String: NWEndpoint] = [:]
     private var ecosystemEndpoints: [String: NWEndpoint] = [:]
     private var ecosystemSnapshots: [String: [MobileDevicePayload]] = [:]
@@ -73,12 +76,16 @@ final class MobileReporter: ObservableObject {
         return id
     }
 
+    private var peerServiceName: String {
+        "\(UIDevice.current.name) • \(stableID.uuidString.prefix(4))"
+    }
+
     var deviceName: String { UIDevice.current.name }
     var modelName: String { UIDevice.current.model }
     var osVersion: String { "\(UIDevice.current.systemName) \(UIDevice.current.systemVersion)" }
-    var hasMac: Bool { !discoveredMacs.isEmpty || !ecosystemEndpoints.isEmpty }
-    var ecosystemMacCount: Int { ecosystemSnapshots.count }
-    var connectedEcosystemCount: Int { ecosystemItems.filter { $0.device.connectionState == .connected }.count }
+    var hasPeer: Bool { !discoveredPeers.isEmpty }
+    var peerCount: Int { discoveredPeers.count }
+    var connectedEcosystemCount: Int { ecosystemItems.count }
 
     var batteryAvailabilityText: String {
         if batteryLevel != nil { return isCharging ? "Charging" : "On Battery" }
@@ -91,20 +98,28 @@ final class MobileReporter: ObservableObject {
 
     func start() {
         if bridgeBrowser != nil {
-            updateBattery()
+            refreshLocalState()
             return
         }
+
         UIDevice.current.isBatteryMonitoringEnabled = true
-        updateBattery()
+        refreshLocalState()
+
         observers.append(NotificationCenter.default.addObserver(forName: UIDevice.batteryLevelDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.updateAndSend() }
         })
         observers.append(NotificationCenter.default.addObserver(forName: UIDevice.batteryStateDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.updateAndSend() }
         })
+        observers.append(NotificationCenter.default.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.updateAndSend() }
+        })
+
         startBridgeBrowser()
+        startEcosystemListener()
         startEcosystemBrowser()
-        timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+
+        timer = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.updateAndSend()
                 self?.refreshEcosystem()
@@ -113,9 +128,10 @@ final class MobileReporter: ObservableObject {
     }
 
     func sendNow() {
-        updateBattery()
-        let payload = makePayload()
-        guard let data = try? JSONEncoder().encode(payload) else { return }
+        refreshLocalState()
+        let payloads = makeLocalPayloads()
+        guard let data = try? JSONEncoder().encode(payloads) else { return }
+
         for endpoint in bridgeEndpoints.values {
             let connection = NWConnection(to: endpoint, using: .tcp)
             connection.stateUpdateHandler = { [weak connection] state in
@@ -126,12 +142,18 @@ final class MobileReporter: ObservableObject {
             }
             connection.start(queue: queue)
         }
+
         if !bridgeEndpoints.isEmpty { lastSent = .now }
+        ecosystemSnapshots[peerServiceName] = payloads
+        rebuildEcosystemItems()
         WidgetCenter.shared.reloadTimelines(ofKind: "AirMateMobileBatteryWidget")
     }
 
     func refreshEcosystem() {
-        for (name, endpoint) in ecosystemEndpoints { requestSnapshot(macName: name, endpoint: endpoint) }
+        refreshLocalState()
+        ecosystemSnapshots[peerServiceName] = makeLocalPayloads()
+        for (name, endpoint) in ecosystemEndpoints { requestSnapshot(peerName: name, endpoint: endpoint) }
+        rebuildEcosystemItems()
         lastEcosystemRefresh = .now
     }
 
@@ -159,13 +181,38 @@ final class MobileReporter: ObservableObject {
                     if case let .service(name, _, _, _) = result.endpoint { map[name] = result.endpoint }
                 }
                 self.bridgeEndpoints = map
-                self.discoveredMacs = Array(Set(map.keys).union(self.ecosystemEndpoints.keys)).sorted()
+                self.updatePeerNames()
                 self.isSearching = false
                 self.sendNow()
             }
         }
         browser.start(queue: queue)
         bridgeBrowser = browser
+    }
+
+    private func startEcosystemListener() {
+        guard ecosystemListener == nil else { return }
+        do {
+            let listener = try NWListener(using: .tcp, on: .any)
+            listener.service = NWListener.Service(name: peerServiceName, type: "_airmate._tcp")
+            listener.newConnectionHandler = { [weak self] connection in
+                Task { @MainActor in self?.sendLocalSnapshot(on: connection) }
+            }
+            listener.start(queue: queue)
+            ecosystemListener = listener
+        } catch {
+            ecosystemListener = nil
+        }
+    }
+
+    private func sendLocalSnapshot(on connection: NWConnection) {
+        refreshLocalState()
+        guard let data = try? JSONEncoder().encode(makeLocalPayloads()) else {
+            connection.cancel()
+            return
+        }
+        connection.start(queue: queue)
+        connection.send(content: data, completion: .contentProcessed { _ in connection.cancel() })
     }
 
     private func startEcosystemBrowser() {
@@ -175,12 +222,13 @@ final class MobileReporter: ObservableObject {
                 guard let self else { return }
                 var map: [String: NWEndpoint] = [:]
                 for result in results {
-                    if case let .service(name, _, _, _) = result.endpoint { map[name] = result.endpoint }
+                    if case let .service(name, _, _, _) = result.endpoint, name != self.peerServiceName {
+                        map[name] = result.endpoint
+                    }
                 }
                 self.ecosystemEndpoints = map
-                self.discoveredMacs = Array(Set(self.bridgeEndpoints.keys).union(map.keys)).sorted()
-                self.ecosystemSnapshots = self.ecosystemSnapshots.filter { map[$0.key] != nil }
-                self.rebuildEcosystemItems()
+                self.ecosystemSnapshots = self.ecosystemSnapshots.filter { key, _ in key == self.peerServiceName || map[key] != nil }
+                self.updatePeerNames()
                 self.refreshEcosystem()
             }
         }
@@ -188,7 +236,11 @@ final class MobileReporter: ObservableObject {
         ecosystemBrowser = browser
     }
 
-    private func requestSnapshot(macName: String, endpoint: NWEndpoint) {
+    private func updatePeerNames() {
+        discoveredPeers = Array(Set(bridgeEndpoints.keys).union(ecosystemEndpoints.keys)).sorted()
+    }
+
+    private func requestSnapshot(peerName: String, endpoint: NWEndpoint) {
         let connection = NWConnection(to: endpoint, using: .tcp)
         connection.stateUpdateHandler = { [weak self, weak connection] state in
             guard let connection else { return }
@@ -196,31 +248,41 @@ final class MobileReporter: ObservableObject {
                 connection.receive(minimumIncompleteLength: 1, maximumLength: 1_048_576) { data, _, _, _ in
                     defer { connection.cancel() }
                     guard let data, let list = try? JSONDecoder().decode([MobileDevicePayload].self, from: data) else { return }
-                    Task { @MainActor in self?.storeSnapshot(list, macName: macName) }
+                    Task { @MainActor in self?.storeSnapshot(list, peerName: peerName) }
                 }
             }
         }
         connection.start(queue: queue)
     }
 
-    private func storeSnapshot(_ devices: [MobileDevicePayload], macName: String) {
-        ecosystemSnapshots[macName] = devices
+    private func storeSnapshot(_ devices: [MobileDevicePayload], peerName: String) {
+        ecosystemSnapshots[peerName] = devices.filter { $0.connectionState == .connected }
         rebuildEcosystemItems()
     }
 
     private func rebuildEcosystemItems() {
-        ecosystemItems = ecosystemSnapshots.keys.sorted().flatMap { host in
-            (ecosystemSnapshots[host] ?? []).map { EcosystemItem(host: host, device: $0) }
-        }.sorted { lhs, rhs in
-            if lhs.device.connectionState != rhs.device.connectionState { return lhs.device.connectionState == .connected }
-            if lhs.host != rhs.host { return lhs.host.localizedCaseInsensitiveCompare(rhs.host) == .orderedAscending }
-            return lhs.device.name.localizedCaseInsensitiveCompare(rhs.device.name) == .orderedAscending
+        var deduplicated: [String: EcosystemItem] = [:]
+        for host in ecosystemSnapshots.keys.sorted() {
+            for device in ecosystemSnapshots[host] ?? [] where device.connectionState == .connected {
+                let key = "\(device.kind.rawValue)|\(device.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())"
+                if deduplicated[key] == nil || host == peerServiceName {
+                    deduplicated[key] = EcosystemItem(host: host, device: device)
+                }
+            }
+        }
+        ecosystemItems = deduplicated.values.sorted { lhs, rhs in
+            lhs.device.name.localizedCaseInsensitiveCompare(rhs.device.name) == .orderedAscending
         }
     }
 
     private func updateAndSend() {
-        updateBattery()
+        refreshLocalState()
         sendNow()
+    }
+
+    private func refreshLocalState() {
+        updateBattery()
+        connectedBluetoothAudio = currentBluetoothAudioDevices()
     }
 
     private func updateBattery() {
@@ -230,23 +292,87 @@ final class MobileReporter: ObservableObject {
         case .charging, .full: isCharging = batteryLevel != nil
         default: isCharging = false
         }
-        WidgetCenter.shared.reloadTimelines(ofKind: "AirMateMobileBatteryWidget")
     }
 
-    private func makePayload() -> MobileDevicePayload {
+    private func makeLocalPayloads() -> [MobileDevicePayload] {
+        [makeDevicePayload()] + connectedBluetoothAudio
+    }
+
+    private func makeDevicePayload() -> MobileDevicePayload {
         let device = UIDevice.current
         let kind: MobileDevicePayload.Kind = device.userInterfaceIdiom == .pad ? .iPad : .iPhone
-        return MobileDevicePayload(id: stableID, name: device.name, kind: kind, modelName: device.model, batteryLevel: batteryLevel, secondaryBatteryLevel: nil, caseBatteryLevel: nil, isCharging: isCharging, isSecondaryCharging: false, isCaseCharging: false, connectionState: .connected, source: .pairedMobile, rssi: nil, lastSeen: .now, metadata: ["platform": device.systemName, "os": device.systemVersion])
+        return MobileDevicePayload(
+            id: stableID,
+            name: device.name,
+            kind: kind,
+            modelName: device.model,
+            batteryLevel: batteryLevel,
+            secondaryBatteryLevel: nil,
+            caseBatteryLevel: nil,
+            isCharging: isCharging,
+            isSecondaryCharging: false,
+            isCaseCharging: false,
+            connectionState: .connected,
+            source: .pairedMobile,
+            rssi: nil,
+            lastSeen: .now,
+            metadata: ["platform": device.systemName, "os": device.systemVersion, "transport": "AirMate"]
+        )
+    }
+
+    private func currentBluetoothAudioDevices() -> [MobileDevicePayload] {
+        let outputs = AVAudioSession.sharedInstance().currentRoute.outputs
+        return outputs.compactMap { port in
+            guard port.portType == .bluetoothA2DP || port.portType == .bluetoothHFP || port.portType == .bluetoothLE else { return nil }
+            let name = port.portName
+            let lower = name.lowercased()
+            let kind: MobileDevicePayload.Kind
+            if lower.contains("airpods") { kind = .airPods }
+            else if lower.contains("beats") { kind = .beats }
+            else { kind = .bluetooth }
+
+            return MobileDevicePayload(
+                id: stableUUID(for: "audio|\(port.uid)|\(name)"),
+                name: name,
+                kind: kind,
+                modelName: nil,
+                batteryLevel: nil,
+                secondaryBatteryLevel: nil,
+                caseBatteryLevel: nil,
+                isCharging: false,
+                isSecondaryCharging: false,
+                isCaseCharging: false,
+                connectionState: .connected,
+                source: .pairedMobile,
+                rssi: nil,
+                lastSeen: .now,
+                metadata: ["transport": "AVAudioSession", "portType": port.portType.rawValue, "reportedBy": deviceName]
+            )
+        }
+    }
+
+    private func stableUUID(for value: String) -> UUID {
+        var bytes = [UInt8](repeating: 0, count: 16)
+        for (index, byte) in value.utf8.enumerated() {
+            bytes[index % 16] = bytes[index % 16] &+ byte &+ UInt8(truncatingIfNeeded: index)
+        }
+        bytes[6] = (bytes[6] & 0x0F) | 0x40
+        bytes[8] = (bytes[8] & 0x3F) | 0x80
+        let tuple: uuid_t = (bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7], bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15])
+        return UUID(uuid: tuple)
     }
 }
 
 struct MobileOverviewView: View {
     @ObservedObject var reporter: MobileReporter
+
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
                 VStack(spacing: 12) {
-                    Image(systemName: UIDevice.current.userInterfaceIdiom == .pad ? "ipad" : "iphone.gen3").font(.system(size: 50, weight: .medium)).symbolRenderingMode(.hierarchical)
+                    Image(systemName: UIDevice.current.userInterfaceIdiom == .pad ? "ipad" : "iphone.gen3")
+                        .font(.system(size: 50, weight: .medium))
+                        .symbolRenderingMode(.hierarchical)
                     Text(reporter.deviceName).font(.title2.bold()).multilineTextAlignment(.center)
                     if let level = reporter.batteryLevel {
                         HStack(alignment: .firstTextBaseline, spacing: 4) {
@@ -257,117 +383,197 @@ struct MobileOverviewView: View {
                     } else {
                         Text("—").font(.system(size: 56, weight: .semibold, design: .rounded))
                         #if targetEnvironment(simulator)
-                        Text("Simulator does not provide a reliable device battery level. Run AirMate on a physical iPhone or iPad to test battery reporting.").font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center).frame(maxWidth: 300)
+                        Text("Simulator does not provide a reliable device battery level. Use a physical iPhone or iPad for battery testing.")
+                            .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center).frame(maxWidth: 300)
                         #endif
                     }
-                    Label(reporter.batteryAvailabilityText, systemImage: reporter.isCharging ? "bolt.fill" : (reporter.batteryLevel == nil ? "questionmark.circle" : "battery.75percent")).foregroundStyle(reporter.isCharging ? .green : .secondary)
-                }.frame(maxWidth: .infinity).padding(24).background(.thinMaterial, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+                    Label(reporter.batteryAvailabilityText, systemImage: reporter.isCharging ? "bolt.fill" : (reporter.batteryLevel == nil ? "questionmark.circle" : "battery.75percent"))
+                        .foregroundStyle(reporter.isCharging ? .green : .secondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(24)
+                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
 
                 HStack(spacing: 12) {
-                    StatusTile(title: "Mac Link", value: reporter.hasMac ? "Connected" : (reporter.isSearching ? "Searching" : "Not Found"), systemImage: reporter.hasMac ? "macmini.fill" : "macmini")
-                    StatusTile(title: "Ecosystem", value: reporter.ecosystemItems.isEmpty ? "No Devices" : "\(reporter.ecosystemItems.count) Devices", systemImage: "rectangle.3.group")
+                    StatusTile(title: "AirMate Link", value: reporter.hasPeer ? "Connected" : (reporter.isSearching ? "Searching" : "Not Found"), systemImage: reporter.hasPeer ? "link.circle.fill" : "link.circle")
+                    StatusTile(title: "Ecosystem", value: "\(reporter.connectedEcosystemCount) Devices", systemImage: "rectangle.3.group")
                 }
                 HStack(spacing: 12) {
-                    StatusTile(title: "AirMate Macs", value: "\(reporter.discoveredMacs.count)", systemImage: "desktopcomputer")
-                    StatusTile(title: "Last Sync", value: reporter.lastSent?.formatted(date: .omitted, time: .shortened) ?? "Never", systemImage: "arrow.trianglehead.2.clockwise.rotate.90")
+                    StatusTile(title: "Peers", value: "\(reporter.peerCount)", systemImage: "network")
+                    StatusTile(title: "Bluetooth Audio", value: "\(reporter.connectedBluetoothAudio.count)", systemImage: "wave.3.right.circle")
                 }
-                Button { reporter.refreshAll() } label: { Label("Sync AirMate Now", systemImage: "arrow.trianglehead.2.clockwise").frame(maxWidth: .infinity) }.buttonStyle(.borderedProminent).controlSize(.large)
+
+                Button { reporter.refreshAll() } label: {
+                    Label("Sync AirMate Now", systemImage: "arrow.trianglehead.2.clockwise").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+
                 VStack(alignment: .leading, spacing: 8) {
-                    Label("AirMate Widget", systemImage: "rectangle.grid.2x2.fill").font(.headline)
-                    Text("Add AirMate Batteries from the Home Screen widget gallery for quick battery status.").font(.subheadline).foregroundStyle(.secondary)
-                }.frame(maxWidth: .infinity, alignment: .leading).padding(18).background(.quaternary, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-            }.padding()
-        }.navigationTitle("AirMate")
+                    Label("Connected-only ecosystem", systemImage: "checkmark.circle.fill").font(.headline)
+                    Text("AirMate shares connected Bluetooth accessories and each AirMate device across your local network. Nearby-but-not-connected Bluetooth advertisements are excluded from the Devices list.")
+                        .font(.subheadline).foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(18)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            }
+            .padding()
+        }
+        .navigationTitle("AirMate")
     }
 }
 
 private struct StatusTile: View {
-    let title: String; let value: String; let systemImage: String
+    let title: String
+    let value: String
+    let systemImage: String
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Image(systemName: systemImage).font(.title2).foregroundStyle(.tint)
             Text(title).font(.caption).foregroundStyle(.secondary)
             Text(value).font(.subheadline.weight(.semibold)).lineLimit(1).minimumScaleFactor(0.72)
-        }.frame(maxWidth: .infinity, minHeight: 100, alignment: .leading).padding(16).background(.quaternary, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        }
+        .frame(maxWidth: .infinity, minHeight: 100, alignment: .leading)
+        .padding(16)
+        .background(.quaternary, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 }
 
 struct EcosystemDevicesView: View {
     @ObservedObject var reporter: MobileReporter
+
     var body: some View {
         List {
-            if reporter.ecosystemItems.isEmpty {
-                ContentUnavailableView("No Ecosystem Devices Yet", systemImage: "rectangle.3.group", description: Text("Run AirMate on your Macs and keep them on the same local network. Each Mac shares the Bluetooth and accessory devices it can see."))
-            } else {
-                Section {
-                    LabeledContent("AirMate Macs", value: "\(reporter.ecosystemMacCount)")
-                    LabeledContent("Connected devices", value: "\(reporter.connectedEcosystemCount)")
-                    if let date = reporter.lastEcosystemRefresh { LabeledContent("Updated", value: date.formatted(date: .omitted, time: .shortened)) }
-                }
-                ForEach(reporter.discoveredMacs, id: \.self) { mac in
-                    let items = reporter.ecosystemItems.filter { $0.host == mac }
-                    if !items.isEmpty { Section(mac) { ForEach(items) { item in EcosystemDeviceRow(item: item) } } }
+            Section {
+                LabeledContent("Connected devices", value: "\(reporter.connectedEcosystemCount)")
+                LabeledContent("AirMate peers", value: "\(reporter.peerCount)")
+                if let date = reporter.lastEcosystemRefresh {
+                    LabeledContent("Updated", value: date.formatted(date: .omitted, time: .shortened))
                 }
             }
-        }.navigationTitle("Devices").toolbar { ToolbarItem(placement: .topBarTrailing) { Button { reporter.refreshEcosystem() } label: { Image(systemName: "arrow.clockwise") } } }
+
+            if reporter.ecosystemItems.isEmpty {
+                ContentUnavailableView(
+                    "No Connected Devices Yet",
+                    systemImage: "dot.radiowaves.left.and.right",
+                    description: Text("Run AirMate on your Mac, iPhone and iPad on the same local network. Connected devices reported by any AirMate peer will appear here.")
+                )
+            } else {
+                Section("Connected Across AirMate") {
+                    ForEach(reporter.ecosystemItems) { item in
+                        EcosystemDeviceRow(item: item)
+                    }
+                }
+            }
+        }
+        .navigationTitle("Devices")
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button { reporter.refreshEcosystem() } label: { Image(systemName: "arrow.clockwise") }
+            }
+        }
     }
 }
 
 private struct EcosystemDeviceRow: View {
     let item: EcosystemItem
+
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: item.device.symbolName).font(.title2).frame(width: 30).foregroundStyle(.tint)
+            Image(systemName: item.device.symbolName)
+                .font(.title2)
+                .frame(width: 30)
+                .foregroundStyle(.tint)
             VStack(alignment: .leading, spacing: 3) {
                 Text(item.device.name).font(.headline)
-                HStack(spacing: 6) { Text(item.device.connectionState.rawValue.capitalized); if let rssi = item.device.rssi { Text("\(rssi) dBm") } }.font(.caption).foregroundStyle(.secondary)
+                Text("Connected • \(item.host)").font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
-            if let battery = item.device.batteryLevel { HStack(spacing: 4) { if item.device.isCharging { Image(systemName: "bolt.fill").foregroundStyle(.green) }; Text("\(battery)%").monospacedDigit().fontWeight(.semibold) } }
-        }.padding(.vertical, 3)
+            if let battery = item.device.batteryLevel {
+                HStack(spacing: 4) {
+                    if item.device.isCharging { Image(systemName: "bolt.fill").foregroundStyle(.green) }
+                    Text("\(battery)%").monospacedDigit().fontWeight(.semibold)
+                }
+            }
+        }
+        .padding(.vertical, 3)
     }
 }
 
-struct NearbyMacsView: View {
+struct NearbyPeersView: View {
     @ObservedObject var reporter: MobileReporter
+
     var body: some View {
         List {
-            Section {
-                if reporter.discoveredMacs.isEmpty {
-                    ContentUnavailableView("No AirMate Mac Found", systemImage: "macmini", description: Text("Keep AirMate running on your Mac and make sure both devices are on the same local network."))
+            Section("AirMate Peers") {
+                if reporter.discoveredPeers.isEmpty {
+                    ContentUnavailableView("No AirMate Peer Found", systemImage: "network", description: Text("Keep AirMate running on your Mac, iPhone or iPad and keep them on the same local network."))
                 } else {
-                    ForEach(reporter.discoveredMacs, id: \.self) { mac in
-                        HStack(spacing: 14) { Image(systemName: "macmini.fill").font(.title2).foregroundStyle(.tint); VStack(alignment: .leading) { Text(mac).font(.headline); Text("AirMate ecosystem source").font(.caption).foregroundStyle(.secondary) }; Spacer(); Image(systemName: "checkmark.circle.fill").foregroundStyle(.green) }
+                    ForEach(reporter.discoveredPeers, id: \.self) { peer in
+                        HStack(spacing: 14) {
+                            Image(systemName: "network").font(.title2).foregroundStyle(.tint)
+                            VStack(alignment: .leading) {
+                                Text(peer).font(.headline)
+                                Text("Connected AirMate ecosystem source").font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                        }
                     }
                 }
-            } header: { Text("Nearby Macs") }
+            }
             Section { Button("Sync AirMate Now") { reporter.refreshAll() } }
-        }.navigationTitle("Macs")
+        }
+        .navigationTitle("Peers")
     }
 }
 
 struct MobileSettingsView: View {
     @ObservedObject var reporter: MobileReporter
+
     var body: some View {
         List {
-            Section("This Device") { LabeledContent("Name", value: reporter.deviceName); LabeledContent("Model", value: reporter.modelName); LabeledContent("Software", value: reporter.osVersion); LabeledContent("Battery", value: reporter.batteryLevel.map { "\($0)%" } ?? "Unavailable") }
-            Section("AirMate Ecosystem") { LabeledContent("Macs discovered", value: "\(reporter.discoveredMacs.count)"); LabeledContent("Devices received", value: "\(reporter.ecosystemItems.count)"); Text("Install and run AirMate on each Mac you want included. Device snapshots stay on your local network.").font(.subheadline).foregroundStyle(.secondary) }
-            Section("About") { LabeledContent("App", value: "AirMate"); LabeledContent("Version", value: "0.6.0 beta"); Text("AirMate reports this iPhone or iPad battery state to your Macs and can display device snapshots shared by AirMate Macs on the same network.").font(.subheadline).foregroundStyle(.secondary) }
-        }.navigationTitle("Settings")
+            Section("This Device") {
+                LabeledContent("Name", value: reporter.deviceName)
+                LabeledContent("Model", value: reporter.modelName)
+                LabeledContent("Software", value: reporter.osVersion)
+                LabeledContent("Battery", value: reporter.batteryLevel.map { "\($0)%" } ?? "Unavailable")
+                LabeledContent("Bluetooth audio", value: "\(reporter.connectedBluetoothAudio.count) connected")
+            }
+            Section("AirMate Ecosystem") {
+                LabeledContent("Peers discovered", value: "\(reporter.peerCount)")
+                LabeledContent("Connected devices", value: "\(reporter.connectedEcosystemCount)")
+                Text("AirMate shares snapshots directly between Macs, iPhones and iPads on the same local network. macOS can enumerate its paired/connected Bluetooth devices. iPhone and iPad can contribute connected Bluetooth audio routes that Apple exposes to apps.")
+                    .font(.subheadline).foregroundStyle(.secondary)
+            }
+            Section("About") {
+                LabeledContent("App", value: "AirMate")
+                LabeledContent("Version", value: "0.7.0 beta")
+            }
+        }
+        .navigationTitle("Settings")
     }
 }
 
 @main
 struct AirMateMobileApp: App {
     @StateObject private var reporter = MobileReporter()
+
     var body: some Scene {
         WindowGroup {
             TabView {
-                NavigationStack { MobileOverviewView(reporter: reporter) }.tabItem { Label("Overview", systemImage: "square.grid.2x2.fill") }
-                NavigationStack { EcosystemDevicesView(reporter: reporter) }.tabItem { Label("Devices", systemImage: "rectangle.3.group") }
-                NavigationStack { NearbyMacsView(reporter: reporter) }.tabItem { Label("Macs", systemImage: "macmini") }
-                NavigationStack { MobileSettingsView(reporter: reporter) }.tabItem { Label("Settings", systemImage: "gearshape") }
-            }.task { reporter.start() }
+                NavigationStack { MobileOverviewView(reporter: reporter) }
+                    .tabItem { Label("Overview", systemImage: "square.grid.2x2.fill") }
+                NavigationStack { EcosystemDevicesView(reporter: reporter) }
+                    .tabItem { Label("Devices", systemImage: "rectangle.3.group") }
+                NavigationStack { NearbyPeersView(reporter: reporter) }
+                    .tabItem { Label("Peers", systemImage: "network") }
+                NavigationStack { MobileSettingsView(reporter: reporter) }
+                    .tabItem { Label("Settings", systemImage: "gearshape") }
+            }
+            .task { reporter.start() }
         }
     }
 }
