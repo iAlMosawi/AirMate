@@ -51,9 +51,11 @@ final class BluetoothScanner: NSObject, ObservableObject {
 
 extension BluetoothScanner: CBCentralManagerDelegate {
     nonisolated func centralManagerDidUpdateState(_ central: CBCentralManager) {
-        Task { @MainActor in
-            state = central.state
-            if central.state == .poweredOn { start() }
+        let stateRawValue = central.state.rawValue
+        Task { @MainActor [stateRawValue] in
+            let newState = CBManagerState(rawValue: stateRawValue) ?? .unknown
+            state = newState
+            if newState == .poweredOn { start() }
         }
     }
 
@@ -67,6 +69,7 @@ extension BluetoothScanner: CBCentralManagerDelegate {
         let name = advertisedName ?? peripheral.name ?? "Nearby Bluetooth Device"
         let identifier = peripheral.identifier
         let manufacturerData = advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data
+        let rssiValue = RSSI.intValue
 
         Task { @MainActor in
             var device = AirMateDevice(
@@ -75,7 +78,7 @@ extension BluetoothScanner: CBCentralManagerDelegate {
                 kind: classify(name: name),
                 connectionState: .nearby,
                 source: .coreBluetooth,
-                rssi: RSSI.intValue,
+                rssi: rssiValue,
                 lastSeen: .now
             )
 
