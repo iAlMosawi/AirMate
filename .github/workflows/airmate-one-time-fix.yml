@@ -1,0 +1,135 @@
+name: AirMate one-time sync/version fix
+
+on:
+  push:
+    paths:
+      - .github/workflows/airmate-one-time-fix.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Patch AirMate
+        shell: python3 {0}
+        run: |
+          from pathlib import Path
+          import re
+
+          def replace(path, old, new, required=True):
+              p = Path(path)
+              text = p.read_text()
+              if old not in text:
+                  if required:
+                      raise SystemExit(f"Expected text not found in {path}: {old[:100]!r}")
+                  return
+              p.write_text(text.replace(old, new))
+
+          # macOS CloudKit sync: immediate visible state + useful error text.
+          replace(
+              "AirMate/Models/DeviceStore.swift",
+              '''    func refresh() {\n        scheduleSync(after: .zero)\n    }''',
+              '''    func refresh() {\n        statusText = "Syncing…"\n        scheduleSync(after: .zero)\n    }'''
+          )
+          replace(
+              "AirMate/Models/DeviceStore.swift",
+              '''            guard account == .available else {\n                peers = []\n                statusText = "iCloud unavailable"\n                return\n            }''',
+              '''            guard account == .available else {\n                peers = []\n                statusText = "iCloud account unavailable"\n                lastSync = nil\n                return\n            }'''
+          )
+          replace(
+              "AirMate/Models/DeviceStore.swift",
+              '''        } catch {\n            statusText = "Cloud sync unavailable"\n        }\n    }''',
+              '''        } catch {\n            statusText = "Cloud error: \\(error.localizedDescription)"\n        }\n    }'''
+          )
+
+          # macOS settings: show the button's active state and correct version.
+          replace(
+              "AirMate/UI/SettingsView.swift",
+              '''                Button("Sync Cloud Now") { store.cloudSync.refresh() }''',
+              '''                Button { store.cloudSync.refresh() } label: {\n                    HStack {\n                        if store.cloudSync.statusText == "Syncing…" { ProgressView().controlSize(.small) }\n                        Text(store.cloudSync.statusText == "Syncing…" ? "Syncing Cloud…" : "Sync Cloud Now")\n                    }\n                }\n                .disabled(store.cloudSync.statusText == "Syncing…")'''
+          )
+          replace(
+              "AirMate/UI/SettingsView.swift",
+              '''                LabeledContent("Version", value: "0.9.0 beta")''',
+              '''                LabeledContent("Version", value: "26.15 (10)")'''
+          )
+
+          # iPhone/iPad: make manual sync visibly start immediately and report CloudKit errors.
+          replace(
+              "AirMateMobile/AirMateMobileApp.swift",
+              '''    func refreshAll() {\n        sendNow()\n        refreshEcosystem()\n    }''',
+              '''    func refreshAll() {\n        cloudStatusText = "Syncing…"\n        lastEcosystemRefresh = .now\n        sendNow()\n        refreshEcosystem()\n    }'''
+          )
+          replace(
+              "AirMateMobile/AirMateMobileApp.swift",
+              '''            guard account == .available else {\n                cloudStatusText = "iCloud unavailable"\n                clearCloudSnapshots()\n                return\n            }''',
+              '''            guard account == .available else {\n                cloudStatusText = "iCloud account unavailable"\n                lastCloudSync = nil\n                clearCloudSnapshots()\n                return\n            }'''
+          )
+          replace(
+              "AirMateMobile/AirMateMobileApp.swift",
+              '''        } catch {\n            cloudStatusText = "Cloud sync unavailable"\n        }''',
+              '''        } catch {\n            cloudStatusText = "Cloud error: \\(error.localizedDescription)"\n        }''',
+              required=False
+          )
+          replace(
+              "AirMateMobile/AirMateMobileApp.swift",
+              '''                Button { reporter.refreshAll() } label: {\n                    Label("Sync AirMate Now", systemImage: "arrow.trianglehead.2.clockwise").frame(maxWidth: .infinity)\n                }\n                .buttonStyle(.borderedProminent)\n                .controlSize(.large)''',
+              '''                Button { reporter.refreshAll() } label: {\n                    HStack {\n                        if reporter.cloudStatusText == "Syncing…" { ProgressView().tint(.white) }\n                        Label(reporter.cloudStatusText == "Syncing…" ? "Syncing AirMate…" : "Sync AirMate Now", systemImage: "arrow.trianglehead.2.clockwise")\n                    }\n                    .frame(maxWidth: .infinity)\n                }\n                .buttonStyle(.borderedProminent)\n                .controlSize(.large)\n                .disabled(reporter.cloudStatusText == "Syncing…")''',
+              required=False
+          )
+          replace(
+              "AirMateMobile/AirMateMobileApp.swift",
+              '''            Section { Button("Sync AirMate Now") { reporter.refreshAll() } }''',
+              '''            Section {\n                Button(reporter.cloudStatusText == "Syncing…" ? "Syncing AirMate…" : "Sync AirMate Now") { reporter.refreshAll() }\n                    .disabled(reporter.cloudStatusText == "Syncing…")\n            }''',
+              required=False
+          )
+
+          # Bundle version/build and product-facing name. Keep signing project untouched so
+          # the Development Team already selected in the user's local Xcode project is preserved.
+          app_plists = [
+              "AirMate/Resources/Info.plist",
+              "AirMateMobile/Info.plist",
+              "AirMateWatch/Info.plist",
+          ]
+          extension_plists = [
+              "AirMateWidget/Info.plist",
+              "AirMateMobileWidget/Info.plist",
+          ]
+          for path in app_plists + extension_plists:
+              p = Path(path)
+              text = p.read_text()
+              text = re.sub(r'(<key>CFBundleShortVersionString</key>\s*<string>).*?(</string>)', r'\g<1>26.15\g<2>', text, flags=re.S)
+              text = re.sub(r'(<key>CFBundleVersion</key>\s*<string>).*?(</string>)', r'\g<1>10\g<2>', text, flags=re.S)
+              p.write_text(text)
+
+          for path in app_plists:
+              p = Path(path)
+              text = p.read_text()
+              if "<key>CFBundleDisplayName</key>" in text:
+                  text = re.sub(r'(<key>CFBundleDisplayName</key>\s*<string>).*?(</string>)', r'\g<1>AirMate\g<2>', text, flags=re.S)
+              if "<key>CFBundleName</key>" in text:
+                  text = re.sub(r'(<key>CFBundleName</key>\s*<string>).*?(</string>)', r'\g<1>AirMate\g<2>', text, flags=re.S)
+              p.write_text(text)
+
+      - name: Verify requested values
+        run: |
+          grep -R "26.15" AirMate/Resources/Info.plist AirMateMobile/Info.plist AirMateWatch/Info.plist AirMateWidget/Info.plist AirMateMobileWidget/Info.plist
+          grep -R "<string>10</string>" AirMate/Resources/Info.plist AirMateMobile/Info.plist AirMateWatch/Info.plist AirMateWidget/Info.plist AirMateMobileWidget/Info.plist
+          grep -n "Syncing…" AirMate/Models/DeviceStore.swift AirMateMobile/AirMateMobileApp.swift
+
+      - name: Commit patch and remove one-time workflow
+        run: |
+          rm .github/workflows/airmate-one-time-fix.yml
+          git config user.name "AirMate CI"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git commit -m "Fix AirMate sync feedback and set version 26.15 build 10"
+          git push origin HEAD:main
