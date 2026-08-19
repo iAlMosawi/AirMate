@@ -2,7 +2,7 @@
 import SwiftUI
 import WidgetKit
 
-private struct WidgetDevice: Codable, Identifiable {
+struct WidgetDevice: Codable, Identifiable {
     enum Kind: String, Codable { case mac, airPods, beats, iPhone, iPad, appleWatch, keyboard, mouse, trackpad, bluetooth, nearbyMac }
     enum ConnectionState: String, Codable { case connected, nearby, disconnected }
     enum Source: String, Codable { case localMac, coreBluetooth, appleAdvertisement, hid, nearbyMac, pairedMobile }
@@ -43,7 +43,7 @@ private struct WidgetDevice: Codable, Identifiable {
     }
 }
 
-private struct WidgetEcosystemDevice: Identifiable {
+struct WidgetEcosystemDevice: Identifiable {
     let host: String
     let device: WidgetDevice
     var id: String { "\(host)|\(device.id.uuidString)" }
