@@ -55,18 +55,26 @@ struct AirMateMobileWidgetEntry: TimelineEntry {
     let cloudAvailable: Bool
 }
 
-struct AirMateMobileWidgetProvider: TimelineProvider {
-    private let container = CKContainer(identifier: "iCloud.com.almosawi.airmate")
-    private let recordType = "AirMateSnapshot"
-    private let liveWindow: TimeInterval = 180
+private final class SendableCompletion<Value>: @unchecked Sendable {
+    private let callback: (Value) -> Void
 
+    init(_ callback: @escaping (Value) -> Void) {
+        self.callback = callback
+    }
+
+    func call(_ value: Value) {
+        callback(value)
+    }
+}
+
+struct AirMateMobileWidgetProvider: TimelineProvider {
     func placeholder(in context: Context) -> AirMateMobileWidgetEntry {
         AirMateMobileWidgetEntry(
             date: .now,
             devices: [
-                WidgetEcosystemDevice(host: "Mac mini", device: sample(name: "AirPods Pro", kind: .airPods, battery: 82)),
-                WidgetEcosystemDevice(host: "Mac mini", device: sample(name: "Magic Keyboard", kind: .keyboard, battery: 94)),
-                WidgetEcosystemDevice(host: "iPhone", device: sample(name: "iPhone", kind: .iPhone, battery: 71))
+                WidgetEcosystemDevice(host: "Mac mini", device: Self.sample(name: "AirPods Pro", kind: .airPods, battery: 82)),
+                WidgetEcosystemDevice(host: "Mac mini", device: Self.sample(name: "Magic Keyboard", kind: .keyboard, battery: 94)),
+                WidgetEcosystemDevice(host: "iPhone", device: Self.sample(name: "iPhone", kind: .iPhone, battery: 71))
             ],
             cloudAvailable: true
         )
@@ -77,26 +85,31 @@ struct AirMateMobileWidgetProvider: TimelineProvider {
             completion(placeholder(in: context))
             return
         }
+        let callback = SendableCompletion(completion)
         Task {
-            completion(await makeEntry())
+            callback.call(await Self.makeEntry())
         }
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<AirMateMobileWidgetEntry>) -> Void) {
+        let callback = SendableCompletion(completion)
         Task {
-            let entry = await makeEntry()
-            completion(Timeline(entries: [entry], policy: .after(Date().addingTimeInterval(5 * 60))))
+            let entry = await Self.makeEntry()
+            callback.call(Timeline(entries: [entry], policy: .after(Date().addingTimeInterval(5 * 60))))
         }
     }
 
-    private func makeEntry() async -> AirMateMobileWidgetEntry {
+    private static func makeEntry() async -> AirMateMobileWidgetEntry {
+        let container = CKContainer(identifier: "iCloud.com.almosawi.airmate")
+        let liveWindow: TimeInterval = 180
+
         do {
             guard try await container.accountStatus() == .available else {
                 return AirMateMobileWidgetEntry(date: .now, devices: [], cloudAvailable: false)
             }
 
             let database = container.privateCloudDatabase
-            let query = CKQuery(recordType: recordType, predicate: NSPredicate(value: true))
+            let query = CKQuery(recordType: "AirMateSnapshot", predicate: NSPredicate(value: true))
             let response = try await database.records(
                 matching: query,
                 inZoneWith: nil,
@@ -142,7 +155,7 @@ struct AirMateMobileWidgetProvider: TimelineProvider {
         }
     }
 
-    private func sample(name: String, kind: WidgetDevice.Kind, battery: Int) -> WidgetDevice {
+    private static func sample(name: String, kind: WidgetDevice.Kind, battery: Int) -> WidgetDevice {
         WidgetDevice(
             id: UUID(), name: name, kind: kind, modelName: nil,
             batteryLevel: battery, secondaryBatteryLevel: nil, caseBatteryLevel: nil,
