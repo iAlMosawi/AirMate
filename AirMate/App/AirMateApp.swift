@@ -12,6 +12,7 @@ struct AirMateApp: App {
             MenuBarView()
                 .environmentObject(deviceStore)
                 .environmentObject(appSettings)
+                .preferredColorScheme(appSettings.appearance.colorScheme)
                 .frame(width: 380)
                 .task {
                     deviceStore.start(settings: appSettings)
@@ -25,14 +26,15 @@ struct AirMateApp: App {
             SettingsView()
                 .environmentObject(appSettings)
                 .environmentObject(deviceStore)
-                .frame(width: 580, height: 500)
+                .preferredColorScheme(appSettings.appearance.colorScheme)
+                .frame(width: 580, height: 540)
         }
     }
 }
 
 struct RefreshAirMateIntent: AppIntent {
     static let title: LocalizedStringResource = "Refresh AirMate Devices"
-    static let description = IntentDescription("Opens AirMate so its nearby device information can refresh.")
+    static let description = IntentDescription("Opens AirMate so its connected device information can refresh.")
     static let openAppWhenRun = true
 
     func perform() async throws -> some IntentResult {
