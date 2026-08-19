@@ -15,6 +15,18 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
+            Section("Appearance") {
+                Picker("Theme", selection: $settings.appearance) {
+                    ForEach(AirMateAppearance.allCases) { appearance in
+                        Text(appearance.title).tag(appearance)
+                    }
+                }
+                .pickerStyle(.segmented)
+                Text("System follows the current macOS appearance. Light and Dark keep AirMate in the selected theme.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Devices") {
                 Toggle("Show generic nearby Bluetooth devices", isOn: $settings.showNearbyBluetooth)
                 Toggle("Hide disconnected devices", isOn: $settings.hideDisconnectedDevices)
@@ -123,7 +135,7 @@ struct SettingsView: View {
 
             Section("About") {
                 LabeledContent("Application", value: "AirMate")
-                LabeledContent("Version", value: "0.8.0 beta")
+                LabeledContent("Version", value: "0.9.0 beta")
                 LabeledContent("Minimum macOS", value: "26.0")
                 LabeledContent("Bundle ID", value: "com.almosawi.airmate")
             }
