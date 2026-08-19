@@ -13,9 +13,9 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>$(MARKETING_VERSION)</string>
+    <string>26.15</string>
     <key>CFBundleVersion</key>
-    <string>$(CURRENT_PROJECT_VERSION)</string>
+    <string>10</string>
     <key>NSLocalNetworkUsageDescription</key>
     <string>AirMate uses your local network to report your Apple Watch battery to AirMate on your Mac.</string>
     <key>NSBonjourServices</key>

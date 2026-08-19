@@ -195,6 +195,8 @@ final class MobileReporter: ObservableObject {
     }
 
     func refreshAll() {
+        cloudStatusText = "Syncing…"
+        lastEcosystemRefresh = .now
         sendNow()
         refreshEcosystem()
     }
@@ -411,7 +413,8 @@ final class MobileReporter: ObservableObject {
         do {
             let account = try await cloudContainer.accountStatus()
             guard account == .available else {
-                cloudStatusText = "iCloud unavailable"
+                cloudStatusText = "iCloud account unavailable"
+                lastCloudSync = nil
                 clearCloudSnapshots()
                 return
             }
@@ -423,7 +426,7 @@ final class MobileReporter: ObservableObject {
             lastCloudSync = .now
             cloudStatusText = cloudPeerNames.isEmpty ? "Cloud connected" : "Cloud connected • \(cloudPeerNames.count) peers"
         } catch {
-            cloudStatusText = "Cloud sync unavailable"
+            cloudStatusText = "Cloud error: \(error.localizedDescription)"
         }
     }
 
@@ -547,10 +550,15 @@ struct MobileOverviewView: View {
                 }
 
                 Button { reporter.refreshAll() } label: {
-                    Label("Sync AirMate Now", systemImage: "arrow.trianglehead.2.clockwise").frame(maxWidth: .infinity)
+                    HStack {
+                        if reporter.cloudStatusText == "Syncing…" { ProgressView().tint(.white) }
+                        Label(reporter.cloudStatusText == "Syncing…" ? "Syncing AirMate…" : "Sync AirMate Now", systemImage: "arrow.trianglehead.2.clockwise")
+                    }
+                    .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
+                .disabled(reporter.cloudStatusText == "Syncing…")
 
                 VStack(alignment: .leading, spacing: 8) {
                     Label("Battery values are source-dependent", systemImage: "battery.75percent").font(.headline)
@@ -697,7 +705,10 @@ struct NearbyPeersView: View {
                     }
                 }
             }
-            Section { Button("Sync AirMate Now") { reporter.refreshAll() } }
+            Section {
+                Button(reporter.cloudStatusText == "Syncing…" ? "Syncing AirMate…" : "Sync AirMate Now") { reporter.refreshAll() }
+                    .disabled(reporter.cloudStatusText == "Syncing…")
+            }
         }
         .navigationTitle("Peers")
     }

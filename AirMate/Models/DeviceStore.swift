@@ -249,6 +249,7 @@ final class AirMateCloudSync: ObservableObject {
     }
 
     func refresh() {
+        statusText = "Syncing…"
         scheduleSync(after: .zero)
     }
 
@@ -266,7 +267,8 @@ final class AirMateCloudSync: ObservableObject {
             let account = try await container.accountStatus()
             guard account == .available else {
                 peers = []
-                statusText = "iCloud unavailable"
+                statusText = "iCloud account unavailable"
+                lastSync = nil
                 return
             }
 
@@ -277,7 +279,7 @@ final class AirMateCloudSync: ObservableObject {
             lastSync = .now
             statusText = peers.isEmpty ? "Cloud connected" : "Cloud connected • \(peerHostCount) peers"
         } catch {
-            statusText = "Cloud sync unavailable"
+            statusText = "Cloud error: \(error.localizedDescription)"
         }
     }
 

@@ -49,7 +49,13 @@ struct SettingsView: View {
                 Text("Cloud sync uses the private iCloud container iCloud.com.almosawi.airmate. A remote snapshot is treated as live only when that AirMate device has refreshed recently.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Button("Sync Cloud Now") { store.cloudSync.refresh() }
+                Button { store.cloudSync.refresh() } label: {
+                    HStack {
+                        if store.cloudSync.statusText == "Syncing…" { ProgressView().controlSize(.small) }
+                        Text(store.cloudSync.statusText == "Syncing…" ? "Syncing Cloud…" : "Sync Cloud Now")
+                    }
+                }
+                .disabled(store.cloudSync.statusText == "Syncing…")
             }
 
             Section("Battery") {
@@ -135,7 +141,7 @@ struct SettingsView: View {
 
             Section("About") {
                 LabeledContent("Application", value: "AirMate")
-                LabeledContent("Version", value: "0.9.0 beta")
+                LabeledContent("Version", value: "26.15 (10)")
                 LabeledContent("Minimum macOS", value: "26.0")
                 LabeledContent("Bundle ID", value: "com.almosawi.airmate")
             }
