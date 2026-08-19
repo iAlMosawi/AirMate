@@ -5,6 +5,22 @@ import SwiftUI
 import UIKit
 import WidgetKit
 
+enum MobileAppearance: String, CaseIterable, Identifiable {
+    case system
+    case light
+    case dark
+
+    var id: String { rawValue }
+    var title: String { rawValue.capitalized }
+    var colorScheme: ColorScheme? {
+        switch self {
+        case .system: nil
+        case .light: .light
+        case .dark: .dark
+        }
+    }
+}
+
 struct MobileDevicePayload: Codable {
     enum Kind: String, Codable { case mac, airPods, beats, iPhone, iPad, appleWatch, keyboard, mouse, trackpad, bluetooth, nearbyMac }
     enum ConnectionState: String, Codable { case connected, nearby, disconnected }
@@ -39,6 +55,10 @@ struct MobileDevicePayload: Codable {
         case .trackpad: return "rectangle.and.hand.point.up.left"
         case .bluetooth: return "dot.radiowaves.left.and.right"
         }
+    }
+
+    var hasAnyBattery: Bool {
+        batteryLevel != nil || secondaryBatteryLevel != nil || caseBatteryLevel != nil
     }
 }
 
@@ -98,6 +118,7 @@ final class MobileReporter: ObservableObject {
     var hasPeer: Bool { !discoveredPeers.isEmpty }
     var peerCount: Int { discoveredPeers.count }
     var connectedEcosystemCount: Int { ecosystemItems.count }
+    var batteryCapableCount: Int { ecosystemItems.filter { $0.device.hasAnyBattery }.count }
 
     var batteryAvailabilityText: String {
         if batteryLevel != nil { return isCharging ? "Charging" : "On Battery" }
@@ -285,16 +306,14 @@ final class MobileReporter: ObservableObject {
                 let key = "\(device.kind.rawValue)|\(device.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())"
                 let candidate = EcosystemItem(host: host, device: device)
                 if let existing = deduplicated[key] {
-                    if sourcePriority(host) > sourcePriority(existing.host) {
-                        deduplicated[key] = candidate
-                    }
+                    if sourcePriority(host) > sourcePriority(existing.host) { deduplicated[key] = candidate }
                 } else {
                     deduplicated[key] = candidate
                 }
             }
         }
-        ecosystemItems = deduplicated.values.sorted { lhs, rhs in
-            lhs.device.name.localizedCaseInsensitiveCompare(rhs.device.name) == .orderedAscending
+        ecosystemItems = deduplicated.values.sorted {
+            $0.device.name.localizedCaseInsensitiveCompare($1.device.name) == .orderedAscending
         }
     }
 
@@ -350,8 +369,7 @@ final class MobileReporter: ObservableObject {
     }
 
     private func currentBluetoothAudioDevices() -> [MobileDevicePayload] {
-        let outputs = AVAudioSession.sharedInstance().currentRoute.outputs
-        return outputs.compactMap { port in
+        AVAudioSession.sharedInstance().currentRoute.outputs.compactMap { port in
             guard port.portType == .bluetoothA2DP || port.portType == .bluetoothHFP || port.portType == .bluetoothLE else { return nil }
             let name = port.portName
             let lower = name.lowercased()
@@ -450,9 +468,9 @@ final class MobileReporter: ObservableObject {
             let remoteHost = (record["hostName"] as? String) ?? "AirMate Device"
             names.insert(remoteHost)
 
-            let converted = decoded
+            fresh["Cloud • \(remoteHost)"] = decoded
                 .filter { $0.connectionState == .connected }
-                .map { original -> MobileDevicePayload in
+                .map { original in
                     var device = original
                     device.connectionState = .connected
                     device.lastSeen = updatedAt
@@ -460,7 +478,6 @@ final class MobileReporter: ObservableObject {
                     device.metadata["sync"] = "CloudKit"
                     return device
                 }
-            fresh["Cloud • \(remoteHost)"] = converted
         }
 
         ecosystemSnapshots = ecosystemSnapshots.filter { !$0.key.hasPrefix("Cloud • ") }
@@ -525,7 +542,7 @@ struct MobileOverviewView: View {
                     StatusTile(title: "Ecosystem", value: "\(reporter.connectedEcosystemCount) Devices", systemImage: "rectangle.3.group")
                 }
                 HStack(spacing: 12) {
-                    StatusTile(title: "Peers", value: "\(reporter.peerCount)", systemImage: "network")
+                    StatusTile(title: "With Battery", value: "\(reporter.batteryCapableCount)", systemImage: "battery.75percent")
                     StatusTile(title: "Cloud", value: reporter.cloudStatusText, systemImage: "icloud.fill")
                 }
 
@@ -536,8 +553,8 @@ struct MobileOverviewView: View {
                 .controlSize(.large)
 
                 VStack(alignment: .leading, spacing: 8) {
-                    Label("Local + Cloud ecosystem", systemImage: "icloud.and.arrow.up.fill").font(.headline)
-                    Text("AirMate uses Bonjour when peers are on the same LAN and private CloudKit when your Mac, iPhone or iPad are on different Wi-Fi networks or cellular data. Only recently reported connected devices are treated as live.")
+                    Label("Battery values are source-dependent", systemImage: "battery.75percent").font(.headline)
+                    Text("AirMate shows battery percentages whenever macOS, iOS/iPadOS, HID, or Apple accessory advertising exposes them. Some connected Bluetooth devices do not publish battery data to third-party apps; those are marked Battery unavailable instead of showing an incorrect value.")
                         .font(.subheadline).foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -574,6 +591,7 @@ struct EcosystemDevicesView: View {
         List {
             Section {
                 LabeledContent("Connected devices", value: "\(reporter.connectedEcosystemCount)")
+                LabeledContent("Devices with battery", value: "\(reporter.batteryCapableCount)")
                 LabeledContent("AirMate peers", value: "\(reporter.peerCount)")
                 LabeledContent("Cloud sync", value: reporter.cloudStatusText)
                 if let date = reporter.lastEcosystemRefresh {
@@ -585,7 +603,7 @@ struct EcosystemDevicesView: View {
                 ContentUnavailableView(
                     "No Connected Devices Yet",
                     systemImage: "dot.radiowaves.left.and.right",
-                    description: Text("Run AirMate on your Mac, iPhone and iPad. Peers on the same network sync with Bonjour; peers elsewhere sync through your private iCloud database.")
+                    description: Text("Run AirMate on your Mac, iPhone and iPad. Same-network peers use Bonjour; remote peers use private iCloud sync.")
                 )
             } else {
                 Section("Connected Across AirMate") {
@@ -613,19 +631,47 @@ private struct EcosystemDeviceRow: View {
                 .font(.title2)
                 .frame(width: 30)
                 .foregroundStyle(.tint)
-            VStack(alignment: .leading, spacing: 3) {
+
+            VStack(alignment: .leading, spacing: 5) {
                 Text(item.device.name).font(.headline)
                 Text("Connected • \(item.host)").font(.caption).foregroundStyle(.secondary)
+                batteryDetails
             }
-            Spacer()
-            if let battery = item.device.batteryLevel {
-                HStack(spacing: 4) {
-                    if item.device.isCharging { Image(systemName: "bolt.fill").foregroundStyle(.green) }
-                    Text("\(battery)%").monospacedDigit().fontWeight(.semibold)
-                }
-            }
+            Spacer(minLength: 4)
         }
-        .padding(.vertical, 3)
+        .padding(.vertical, 4)
+    }
+
+    @ViewBuilder
+    private var batteryDetails: some View {
+        let device = item.device
+        if device.kind == .airPods || device.kind == .beats, device.secondaryBatteryLevel != nil || device.caseBatteryLevel != nil {
+            HStack(spacing: 10) {
+                batteryChip("L", device.batteryLevel, device.isCharging)
+                batteryChip("R", device.secondaryBatteryLevel, device.isSecondaryCharging)
+                batteryChip("Case", device.caseBatteryLevel, device.isCaseCharging)
+            }
+        } else if let battery = device.batteryLevel {
+            HStack(spacing: 5) {
+                Image(systemName: device.isCharging ? "battery.100percent.bolt" : "battery.75percent")
+                Text("\(battery)%").monospacedDigit().fontWeight(.semibold)
+            }
+            .font(.subheadline)
+        } else {
+            Label("Battery unavailable", systemImage: "battery.0percent")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func batteryChip(_ title: String, _ value: Int?, _ charging: Bool) -> some View {
+        HStack(spacing: 3) {
+            Text(title)
+            Text(value.map { "\($0)%" } ?? "—").monospacedDigit().fontWeight(.semibold)
+            if charging { Image(systemName: "bolt.fill").font(.caption2).foregroundStyle(.green) }
+        }
+        .font(.caption)
+        .foregroundStyle(value == nil ? .secondary : .primary)
     }
 }
 
@@ -659,9 +705,28 @@ struct NearbyPeersView: View {
 
 struct MobileSettingsView: View {
     @ObservedObject var reporter: MobileReporter
+    @AppStorage("airmateAppearance") private var appearanceRaw = MobileAppearance.system.rawValue
+
+    private var appearanceBinding: Binding<MobileAppearance> {
+        Binding(
+            get: { MobileAppearance(rawValue: appearanceRaw) ?? .system },
+            set: { appearanceRaw = $0.rawValue }
+        )
+    }
 
     var body: some View {
         List {
+            Section("Appearance") {
+                Picker("Theme", selection: appearanceBinding) {
+                    ForEach(MobileAppearance.allCases) { appearance in
+                        Text(appearance.title).tag(appearance)
+                    }
+                }
+                .pickerStyle(.segmented)
+                Text("System follows iPhone or iPad appearance. Light and Dark keep AirMate in the selected theme.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
             Section("This Device") {
                 LabeledContent("Name", value: reporter.deviceName)
                 LabeledContent("Model", value: reporter.modelName)
@@ -669,9 +734,11 @@ struct MobileSettingsView: View {
                 LabeledContent("Battery", value: reporter.batteryLevel.map { "\($0)%" } ?? "Unavailable")
                 LabeledContent("Bluetooth audio", value: "\(reporter.connectedBluetoothAudio.count) connected")
             }
+
             Section("AirMate Ecosystem") {
                 LabeledContent("Peers discovered", value: "\(reporter.peerCount)")
                 LabeledContent("Connected devices", value: "\(reporter.connectedEcosystemCount)")
+                LabeledContent("Devices with battery", value: "\(reporter.batteryCapableCount)")
                 LabeledContent("Cloud sync", value: reporter.cloudStatusText)
                 if let date = reporter.lastCloudSync {
                     LabeledContent("Last cloud sync", value: date.formatted(date: .omitted, time: .shortened))
@@ -679,9 +746,10 @@ struct MobileSettingsView: View {
                 Text("Bonjour provides fast same-network sync. Private CloudKit provides cross-network sync between your AirMate Macs, iPhones and iPads signed into the same iCloud account.")
                     .font(.subheadline).foregroundStyle(.secondary)
             }
+
             Section("About") {
                 LabeledContent("App", value: "AirMate")
-                LabeledContent("Version", value: "0.8.0 beta")
+                LabeledContent("Version", value: "0.9.0 beta")
             }
         }
         .navigationTitle("Settings")
@@ -691,6 +759,11 @@ struct MobileSettingsView: View {
 @main
 struct AirMateMobileApp: App {
     @StateObject private var reporter = MobileReporter()
+    @AppStorage("airmateAppearance") private var appearanceRaw = MobileAppearance.system.rawValue
+
+    private var preferredScheme: ColorScheme? {
+        (MobileAppearance(rawValue: appearanceRaw) ?? .system).colorScheme
+    }
 
     var body: some Scene {
         WindowGroup {
@@ -704,6 +777,7 @@ struct AirMateMobileApp: App {
                 NavigationStack { MobileSettingsView(reporter: reporter) }
                     .tabItem { Label("Settings", systemImage: "gearshape") }
             }
+            .preferredColorScheme(preferredScheme)
             .task { reporter.start() }
         }
     }
