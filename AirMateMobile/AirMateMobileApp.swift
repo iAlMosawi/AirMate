@@ -78,6 +78,8 @@ final class MobileReporter: ObservableObject {
     @Published private(set) var lastSent: Date?
     @Published private(set) var lastEcosystemRefresh: Date?
     @Published private(set) var cloudStatusText = "Starting…"
+    @Published private(set) var cloudAccountFingerprint = "Checking…"
+    @Published private(set) var cloudLastError: String?
     @Published private(set) var lastCloudSync: Date?
     @Published private(set) var isSearching = true
 
@@ -93,7 +95,7 @@ final class MobileReporter: ObservableObject {
     private let queue = DispatchQueue(label: "com.almosawi.airmate.mobile.reporter", qos: .utility)
     private let cloudContainer = CKContainer(identifier: "iCloud.com.almosawi.airmate")
     private let cloudRecordType = "AirMateSnapshot"
-    private let cloudLiveWindow: TimeInterval = 180
+    private let cloudLiveWindow: TimeInterval = 86_400
     private var cloudSyncTask: Task<Void, Never>?
 
     private var stableID: UUID {
@@ -420,12 +422,16 @@ final class MobileReporter: ObservableObject {
             }
 
             cloudStatusText = "Syncing…"
+            cloudLastError = nil
+            let userRecordID = try await cloudContainer.userRecordID()
+            cloudAccountFingerprint = Self.shortAccountFingerprint(userRecordID.recordName)
             let database = cloudContainer.privateCloudDatabase
             try await uploadCloudSnapshot(to: database)
             try await fetchCloudSnapshots(from: database)
             lastCloudSync = .now
             cloudStatusText = cloudPeerNames.isEmpty ? "Cloud connected" : "Cloud connected • \(cloudPeerNames.count) peers"
         } catch {
+            cloudLastError = error.localizedDescription
             cloudStatusText = "Cloud error: \(error.localizedDescription)"
         }
     }
@@ -495,6 +501,12 @@ final class MobileReporter: ObservableObject {
         cloudPeerNames = []
         updatePeerNames()
         rebuildEcosystemItems()
+    }
+
+    private static func shortAccountFingerprint(_ value: String) -> String {
+        var hash: UInt64 = 1469598103934665603
+        for byte in value.utf8 { hash = (hash ^ UInt64(byte)) &* 1099511628211 }
+        return String(format: "%08X", UInt32(truncatingIfNeeded: hash))
     }
 
     private func stableUUID(for value: String) -> UUID {
@@ -770,6 +782,7 @@ struct MobileSettingsView: View {
 @main
 struct AirMateMobileApp: App {
     @StateObject private var reporter = MobileReporter()
+    @Environment(\.scenePhase) private var scenePhase
     @AppStorage("airmateAppearance") private var appearanceRaw = MobileAppearance.system.rawValue
 
     private var preferredScheme: ColorScheme? {
@@ -789,6 +802,9 @@ struct AirMateMobileApp: App {
                     .tabItem { Label("Settings", systemImage: "gearshape") }
             }
             .preferredColorScheme(preferredScheme)
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active { reporter.refreshAll() }
+            }
             .task { reporter.start() }
         }
     }

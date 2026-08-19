@@ -7,6 +7,16 @@ import IOKit.hid
 import Network
 import UserNotifications
 
+
+private struct SystemBluetoothBatterySample: Sendable {
+    let name: String
+    let address: String?
+    let main: Int?
+    let left: Int?
+    let right: Int?
+    let caseLevel: Int?
+}
+
 @MainActor
 final class BluetoothScanner: NSObject, ObservableObject {
     @Published private(set) var discovered: [UUID: AirMateDevice] = [:]
@@ -23,9 +33,10 @@ final class BluetoothScanner: NSObject, ObservableObject {
 
     func start() {
         refreshClassicBluetoothDevices()
+        refreshSystemBluetoothBatteryLevels()
         classicTimer?.invalidate()
         classicTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.refreshClassicBluetoothDevices() }
+            Task { @MainActor in self?.refreshClassicBluetoothDevices(); self?.refreshSystemBluetoothBatteryLevels() }
         }
         guard central.state == .poweredOn else { return }
         central.scanForPeripherals(withServices: nil, options: [CBCentralManagerScanOptionAllowDuplicatesKey: true])
@@ -98,6 +109,94 @@ final class BluetoothScanner: NSObject, ObservableObject {
                 updated.lastSeen = .now
                 discovered[id] = updated
             }
+        }
+    }
+
+    private func refreshSystemBluetoothBatteryLevels() {
+        Task.detached(priority: .utility) {
+            let samples = Self.loadSystemBluetoothBatteryLevels()
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                for sample in samples {
+                    guard let existing = self.discovered.first(where: { pair in
+                        let device = pair.value
+                        if device.name.caseInsensitiveCompare(sample.name) == .orderedSame { return true }
+                        if let address = sample.address,
+                           let existingAddress = device.metadata["address"],
+                           existingAddress.caseInsensitiveCompare(address) == .orderedSame { return true }
+                        return false
+                    }) else { continue }
+
+                    var device = existing.value
+                    if let main = sample.main { device.batteryLevel = main }
+                    if let left = sample.left { device.batteryLevel = left }
+                    if let right = sample.right { device.secondaryBatteryLevel = right }
+                    if let caseLevel = sample.caseLevel { device.caseBatteryLevel = caseLevel }
+                    if device.hasAnyBattery { device.metadata["batterySource"] = "macOS" }
+                    self.discovered[existing.key] = device
+                }
+            }
+        }
+    }
+
+    nonisolated private static func loadSystemBluetoothBatteryLevels() -> [SystemBluetoothBatterySample] {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/sbin/system_profiler")
+        process.arguments = ["SPBluetoothDataType", "-json", "-detailLevel", "mini"]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = Pipe()
+
+        do {
+            try process.run()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            guard process.terminationStatus == 0,
+                  let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [] }
+
+            func percent(_ value: Any?) -> Int? {
+                if let number = value as? NSNumber { return max(0, min(100, number.intValue)) }
+                guard let text = value as? String else { return nil }
+                let digits = text.filter(\.isNumber)
+                guard let value = Int(digits) else { return nil }
+                return max(0, min(100, value))
+            }
+
+            var output: [SystemBluetoothBatterySample] = []
+            func walk(_ value: Any, keyName: String? = nil) {
+                if let dict = value as? [String: Any] {
+                    let batteryEntries = dict.filter { $0.key.lowercased().contains("battery") }
+                    if !batteryEntries.isEmpty, let name = keyName {
+                        func battery(_ components: [String]) -> Int? {
+                            for (key, value) in batteryEntries {
+                                let lower = key.lowercased()
+                                if components.allSatisfy({ lower.contains($0) }), let result = percent(value) { return result }
+                            }
+                            return nil
+                        }
+                        let exactMain = batteryEntries.first { key, _ in
+                            let lower = key.lowercased()
+                            return lower.contains("main") || lower.hasSuffix("battery") || lower.hasSuffix("batterylevel")
+                        }.flatMap { percent($0.value) }
+                        let address = dict.first { $0.key.lowercased().contains("address") }?.value as? String
+                        output.append(SystemBluetoothBatterySample(
+                            name: name,
+                            address: address,
+                            main: battery(["main"]) ?? exactMain,
+                            left: battery(["left"]),
+                            right: battery(["right"]),
+                            caseLevel: battery(["case"])
+                        ))
+                    }
+                    for (key, child) in dict { walk(child, keyName: key) }
+                } else if let array = value as? [Any] {
+                    for child in array { walk(child, keyName: keyName) }
+                }
+            }
+            walk(root)
+            return output
+        } catch {
+            return []
         }
     }
 

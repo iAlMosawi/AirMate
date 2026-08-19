@@ -101,7 +101,7 @@ struct AirMateMobileWidgetProvider: TimelineProvider {
 
     private static func makeEntry() async -> AirMateMobileWidgetEntry {
         let container = CKContainer(identifier: "iCloud.com.almosawi.airmate")
-        let liveWindow: TimeInterval = 180
+        let liveWindow: TimeInterval = 86_400
 
         do {
             guard try await container.accountStatus() == .available else {

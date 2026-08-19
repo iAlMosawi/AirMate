@@ -42,10 +42,12 @@ struct SettingsView: View {
 
             Section("Cloud Sync") {
                 LabeledContent("Status", value: store.cloudSync.statusText)
+                LabeledContent("iCloud account", value: store.cloudSync.accountFingerprint)
                 if let date = store.cloudSync.lastSync {
                     LabeledContent("Last sync", value: date.formatted(date: .omitted, time: .shortened))
                 }
-                LabeledContent("Live cloud devices", value: "\(store.cloudSync.peers.count)")
+                LabeledContent("Cloud devices", value: "\(store.cloudSync.peers.count)")
+                if let error = store.cloudSync.lastError { Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled) }
                 Text("Cloud sync uses the private iCloud container iCloud.com.almosawi.airmate. A remote snapshot is treated as live only when that AirMate device has refreshed recently.")
                     .font(.caption)
                     .foregroundStyle(.secondary)

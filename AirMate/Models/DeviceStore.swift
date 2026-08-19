@@ -211,6 +211,8 @@ final class AirMateCloudSync: ObservableObject {
     @Published private(set) var peers: [AirMateDevice] = []
     @Published private(set) var statusText = "Starting…"
     @Published private(set) var lastSync: Date?
+    @Published private(set) var accountFingerprint = "Checking…"
+    @Published private(set) var lastError: String?
 
     let installationID: UUID
 
@@ -218,7 +220,7 @@ final class AirMateCloudSync: ObservableObject {
     private var localDevices: [AirMateDevice] = []
     private var scheduledSync: Task<Void, Never>?
     private let recordType = "AirMateSnapshot"
-    private let liveWindow: TimeInterval = 180
+    private let liveWindow: TimeInterval = 86_400
 
     init() {
         let key = "AirMateCloudInstallationID"
@@ -273,12 +275,16 @@ final class AirMateCloudSync: ObservableObject {
             }
 
             statusText = "Syncing…"
+            lastError = nil
+            let userRecordID = try await container.userRecordID()
+            accountFingerprint = Self.shortAccountFingerprint(userRecordID.recordName)
             let database = container.privateCloudDatabase
             try await uploadLocalSnapshot(to: database)
             peers = try await fetchRemoteSnapshots(from: database)
             lastSync = .now
             statusText = peers.isEmpty ? "Cloud connected" : "Cloud connected • \(peerHostCount) peers"
         } catch {
+            lastError = error.localizedDescription
             statusText = "Cloud error: \(error.localizedDescription)"
         }
     }
@@ -345,6 +351,12 @@ final class AirMateCloudSync: ObservableObject {
             }
         }
         return output
+    }
+
+    private static func shortAccountFingerprint(_ value: String) -> String {
+        var hash: UInt64 = 1469598103934665603
+        for byte in value.utf8 { hash = (hash ^ UInt64(byte)) &* 1099511628211 }
+        return String(format: "%08X", UInt32(truncatingIfNeeded: hash))
     }
 
     private var peerHostCount: Int {
