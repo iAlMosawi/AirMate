@@ -1,0 +1,368 @@
+name: AirMate Full Repair v2
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/repair-airmate-v2.yml
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.event.head_commit.message == 'Run AirMate full repair'
+    runs-on: xcode-27
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Apply repairs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import json, re
+
+          def replace_once(text, old, new, label):
+              if old not in text:
+                  raise SystemExit(f'Missing patch marker: {label}')
+              return text.replace(old, new, 1)
+
+          # ------------------------------------------------------------------
+          # Project metadata: one version/build and AirMate product name.
+          # ------------------------------------------------------------------
+          pbx = Path('AirMate.xcodeproj/project.pbxproj')
+          text = pbx.read_text()
+          text = re.sub(r'MARKETING_VERSION=[^;]+;', 'MARKETING_VERSION=26.15;', text)
+          text = re.sub(r'CURRENT_PROJECT_VERSION=[^;]+;', 'CURRENT_PROJECT_VERSION=10;', text)
+          text = text.replace('PRODUCT_NAME="$(TARGET_NAME)";SDKROOT=macosx;', 'PRODUCT_NAME="AirMate";SDKROOT=macosx;', 1)
+          pbx.write_text(text)
+
+          for plist in ['AirMate/Resources/Info.plist', 'AirMateMobile/Info.plist', 'AirMateWatch/Info.plist']:
+              p = Path(plist)
+              s = p.read_text()
+              for key, value in [
+                  ('CFBundleDisplayName','AirMate'),
+                  ('CFBundleName','AirMate'),
+                  ('CFBundleShortVersionString','26.15'),
+                  ('CFBundleVersion','10'),
+              ]:
+                  pat = rf'(<key>{re.escape(key)}</key>\s*<string>)(.*?)(</string>)'
+                  if re.search(pat, s, re.S):
+                      s = re.sub(pat, rf'\g<1>{value}\g<3>', s, flags=re.S)
+              p.write_text(s)
+
+          # ------------------------------------------------------------------
+          # macOS icon catalog: Apple requires all macOS sizes.
+          # ------------------------------------------------------------------
+          icon_contents = {
+              'images': [
+                  {'filename':'icon_16x16.png','idiom':'mac','scale':'1x','size':'16x16'},
+                  {'filename':'icon_16x16@2x.png','idiom':'mac','scale':'2x','size':'16x16'},
+                  {'filename':'icon_32x32.png','idiom':'mac','scale':'1x','size':'32x32'},
+                  {'filename':'icon_32x32@2x.png','idiom':'mac','scale':'2x','size':'32x32'},
+                  {'filename':'icon_128x128.png','idiom':'mac','scale':'1x','size':'128x128'},
+                  {'filename':'icon_128x128@2x.png','idiom':'mac','scale':'2x','size':'128x128'},
+                  {'filename':'icon_256x256.png','idiom':'mac','scale':'1x','size':'256x256'},
+                  {'filename':'icon_256x256@2x.png','idiom':'mac','scale':'2x','size':'256x256'},
+                  {'filename':'icon_512x512.png','idiom':'mac','scale':'1x','size':'512x512'},
+                  {'filename':'AirMateIcon.png','idiom':'mac','scale':'2x','size':'512x512'},
+              ],
+              'info': {'author':'xcode','version':1},
+          }
+          Path('AirMate/Assets.xcassets/AppIcon.appiconset/Contents.json').write_text(json.dumps(icon_contents, indent=2) + '\n')
+
+          # ------------------------------------------------------------------
+          # macOS CloudKit: same private iCloud account, visible diagnostics,
+          # 24-hour snapshot retention, and exact error reporting.
+          # ------------------------------------------------------------------
+          p = Path('AirMate/Models/DeviceStore.swift')
+          s = p.read_text()
+          s = replace_once(
+              s,
+              '@Published private(set) var lastSync: Date?\n',
+              '@Published private(set) var lastSync: Date?\n    @Published private(set) var accountFingerprint = "Checking…"\n    @Published private(set) var lastError: String?\n',
+              'Mac Cloud published state'
+          )
+          s = s.replace('private let liveWindow: TimeInterval = 180', 'private let liveWindow: TimeInterval = 86_400')
+          s = replace_once(
+              s,
+              'statusText = "Syncing…"\n            let database = container.privateCloudDatabase',
+              'statusText = "Syncing…"\n            lastError = nil\n            let userRecordID = try await container.userRecordID()\n            accountFingerprint = Self.shortAccountFingerprint(userRecordID.recordName)\n            let database = container.privateCloudDatabase',
+              'Mac Cloud account verification'
+          )
+          s = replace_once(
+              s,
+              '} catch {\n            statusText = "Cloud error: \\(error.localizedDescription)"\n        }',
+              '} catch {\n            lastError = error.localizedDescription\n            statusText = "Cloud error: \\(error.localizedDescription)"\n        }',
+              'Mac Cloud error detail'
+          )
+          helper = '''    private static func shortAccountFingerprint(_ value: String) -> String {
+        var hash: UInt64 = 1469598103934665603
+        for byte in value.utf8 { hash = (hash ^ UInt64(byte)) &* 1099511628211 }
+        return String(format: "%08X", UInt32(truncatingIfNeeded: hash))
+    }
+
+'''
+          marker = '    private var peerHostCount: Int {'
+          if 'private static func shortAccountFingerprint' not in s:
+              s = replace_once(s, marker, helper + marker, 'Mac Cloud account helper')
+          p.write_text(s)
+
+          p = Path('AirMate/UI/SettingsView.swift')
+          s = p.read_text()
+          s = replace_once(
+              s,
+              'LabeledContent("Status", value: store.cloudSync.statusText)',
+              'LabeledContent("Status", value: store.cloudSync.statusText)\n                LabeledContent("iCloud account", value: store.cloudSync.accountFingerprint)',
+              'Mac iCloud account UI'
+          )
+          s = s.replace('LabeledContent("Live cloud devices", value: "\\(store.cloudSync.peers.count)")', 'LabeledContent("Cloud devices", value: "\\(store.cloudSync.peers.count)")\n                if let error = store.cloudSync.lastError { Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled) }')
+          s = s.replace('LabeledContent("Version", value: "0.9.0 beta")', 'LabeledContent("Version", value: "26.15 (10)")')
+          p.write_text(s)
+
+          # ------------------------------------------------------------------
+          # iPhone/iPad CloudKit: verify account, retain snapshots long enough
+          # for backgrounded devices, show exact errors, and refresh on active.
+          # ------------------------------------------------------------------
+          p = Path('AirMateMobile/AirMateMobileApp.swift')
+          s = p.read_text()
+          s = replace_once(
+              s,
+              '@Published private(set) var cloudStatusText = "Starting…"\n',
+              '@Published private(set) var cloudStatusText = "Starting…"\n    @Published private(set) var cloudAccountFingerprint = "Checking…"\n    @Published private(set) var cloudLastError: String?\n',
+              'Mobile Cloud published state'
+          )
+          s = s.replace('private let cloudLiveWindow: TimeInterval = 180', 'private let cloudLiveWindow: TimeInterval = 86_400')
+          s = replace_once(
+              s,
+              'cloudStatusText = "Syncing…"\n            let database = cloudContainer.privateCloudDatabase',
+              'cloudStatusText = "Syncing…"\n            cloudLastError = nil\n            let userRecordID = try await cloudContainer.userRecordID()\n            cloudAccountFingerprint = Self.shortAccountFingerprint(userRecordID.recordName)\n            let database = cloudContainer.privateCloudDatabase',
+              'Mobile Cloud account verification'
+          )
+          s = replace_once(
+              s,
+              '} catch {\n            cloudStatusText = "Cloud error: \\(error.localizedDescription)"\n        }',
+              '} catch {\n            cloudLastError = error.localizedDescription\n            cloudStatusText = "Cloud error: \\(error.localizedDescription)"\n        }',
+              'Mobile Cloud error detail'
+          )
+          helper = '''    private static func shortAccountFingerprint(_ value: String) -> String {
+        var hash: UInt64 = 1469598103934665603
+        for byte in value.utf8 { hash = (hash ^ UInt64(byte)) &* 1099511628211 }
+        return String(format: "%08X", UInt32(truncatingIfNeeded: hash))
+    }
+
+'''
+          marker = '    private func stableUUID'
+          if 'private static func shortAccountFingerprint' not in s:
+              s = replace_once(s, marker, helper + marker, 'Mobile Cloud account helper')
+
+          # Put iCloud account/error in the mobile Settings cloud section.
+          s = s.replace(
+              'LabeledContent("Cloud", value: reporter.cloudStatusText)',
+              'LabeledContent("Cloud", value: reporter.cloudStatusText)\n                LabeledContent("iCloud account", value: reporter.cloudAccountFingerprint)\n                if let error = reporter.cloudLastError { Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled) }'
+          )
+
+          # Refresh immediately whenever iOS/iPadOS returns to foreground.
+          s = replace_once(
+              s,
+              '@StateObject private var reporter = MobileReporter()\n',
+              '@StateObject private var reporter = MobileReporter()\n    @Environment(\\.scenePhase) private var scenePhase\n',
+              'Mobile scene phase'
+          )
+          if '.onChange(of: scenePhase)' not in s:
+              s = replace_once(
+                  s,
+                  '.preferredColorScheme(preferredScheme)',
+                  '.preferredColorScheme(preferredScheme)\n            .onChange(of: scenePhase) { _, phase in\n                if phase == .active { reporter.refreshAll() }\n            }',
+                  'Mobile foreground refresh'
+              )
+          p.write_text(s)
+
+          # Widget should not discard remote devices after three minutes.
+          p = Path('AirMateMobileWidget/AirMateMobileWidget.swift')
+          s = p.read_text().replace('let liveWindow: TimeInterval = 180', 'let liveWindow: TimeInterval = 86_400')
+          p.write_text(s)
+
+          # ------------------------------------------------------------------
+          # macOS battery reporting: preserve BLE/AirPods data, HID batteries,
+          # and supplement connected classic Bluetooth with system_profiler.
+          # ------------------------------------------------------------------
+          p = Path('AirMate/Services/BluetoothScanner.swift')
+          s = p.read_text()
+          sample_type = '''
+private struct SystemBluetoothBatterySample: Sendable {
+    let name: String
+    let address: String?
+    let main: Int?
+    let left: Int?
+    let right: Int?
+    let caseLevel: Int?
+}
+
+'''
+          if 'struct SystemBluetoothBatterySample' not in s:
+              s = replace_once(s, '@MainActor\nfinal class BluetoothScanner', sample_type + '@MainActor\nfinal class BluetoothScanner', 'System battery sample type')
+
+          s = replace_once(
+              s,
+              'refreshClassicBluetoothDevices()\n        classicTimer?.invalidate()',
+              'refreshClassicBluetoothDevices()\n        refreshSystemBluetoothBatteryLevels()\n        classicTimer?.invalidate()',
+              'Initial system battery refresh'
+          )
+          s = s.replace(
+              'Task { @MainActor in self?.refreshClassicBluetoothDevices() }',
+              'Task { @MainActor in self?.refreshClassicBluetoothDevices(); self?.refreshSystemBluetoothBatteryLevels() }'
+          )
+
+          battery_methods = r'''    private func refreshSystemBluetoothBatteryLevels() {
+        Task.detached(priority: .utility) {
+            let samples = Self.loadSystemBluetoothBatteryLevels()
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                for sample in samples {
+                    guard let existing = self.discovered.first(where: { pair in
+                        let device = pair.value
+                        if device.name.caseInsensitiveCompare(sample.name) == .orderedSame { return true }
+                        if let address = sample.address,
+                           let existingAddress = device.metadata["address"],
+                           existingAddress.caseInsensitiveCompare(address) == .orderedSame { return true }
+                        return false
+                    }) else { continue }
+
+                    var device = existing.value
+                    if let main = sample.main { device.batteryLevel = main }
+                    if let left = sample.left { device.batteryLevel = left }
+                    if let right = sample.right { device.secondaryBatteryLevel = right }
+                    if let caseLevel = sample.caseLevel { device.caseBatteryLevel = caseLevel }
+                    if device.hasAnyBattery { device.metadata["batterySource"] = "macOS" }
+                    self.discovered[existing.key] = device
+                }
+            }
+        }
+    }
+
+    nonisolated private static func loadSystemBluetoothBatteryLevels() -> [SystemBluetoothBatterySample] {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/sbin/system_profiler")
+        process.arguments = ["SPBluetoothDataType", "-json", "-detailLevel", "mini"]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = Pipe()
+
+        do {
+            try process.run()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            guard process.terminationStatus == 0,
+                  let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [] }
+
+            func percent(_ value: Any?) -> Int? {
+                if let number = value as? NSNumber { return max(0, min(100, number.intValue)) }
+                guard let text = value as? String else { return nil }
+                let digits = text.filter(\.isNumber)
+                guard let value = Int(digits) else { return nil }
+                return max(0, min(100, value))
+            }
+
+            var output: [SystemBluetoothBatterySample] = []
+            func walk(_ value: Any, keyName: String? = nil) {
+                if let dict = value as? [String: Any] {
+                    let batteryEntries = dict.filter { $0.key.lowercased().contains("battery") }
+                    if !batteryEntries.isEmpty, let name = keyName {
+                        func battery(_ components: [String]) -> Int? {
+                            for (key, value) in batteryEntries {
+                                let lower = key.lowercased()
+                                if components.allSatisfy({ lower.contains($0) }), let result = percent(value) { return result }
+                            }
+                            return nil
+                        }
+                        let exactMain = batteryEntries.first { key, _ in
+                            let lower = key.lowercased()
+                            return lower.contains("main") || lower.hasSuffix("battery") || lower.hasSuffix("batterylevel")
+                        }.flatMap { percent($0.value) }
+                        let address = dict.first { $0.key.lowercased().contains("address") }?.value as? String
+                        output.append(SystemBluetoothBatterySample(
+                            name: name,
+                            address: address,
+                            main: battery(["main"]) ?? exactMain,
+                            left: battery(["left"]),
+                            right: battery(["right"]),
+                            caseLevel: battery(["case"])
+                        ))
+                    }
+                    for (key, child) in dict { walk(child, keyName: key) }
+                } else if let array = value as? [Any] {
+                    for child in array { walk(child, keyName: keyName) }
+                }
+            }
+            walk(root)
+            return output
+        } catch {
+            return []
+        }
+    }
+
+'''
+          marker = '    private func stableBluetoothUUID(address: String, fallback: String) -> UUID {'
+          if 'loadSystemBluetoothBatteryLevels' not in s:
+              s = replace_once(s, marker, battery_methods + marker, 'System battery methods')
+          p.write_text(s)
+
+          # README version marker.
+          p = Path('README.md')
+          s = re.sub(r'0\.9\.0(?: beta)?', '26.15', p.read_text())
+          p.write_text(s)
+          PY
+
+          # Generate a complete macOS icon family and keep the exact same icon
+          # master on Mac, iPhone/iPad, and Watch.
+          ICON_DIR="AirMate/Assets.xcassets/AppIcon.appiconset"
+          MASTER="$ICON_DIR/AirMateIcon.png"
+          cp "$MASTER" AirMateMobile/Assets.xcassets/AppIcon.appiconset/AirMateIcon.png
+          cp "$MASTER" AirMateWatch/Assets.xcassets/AppIcon.appiconset/AirMateIcon.png
+          sips -z 16 16 "$MASTER" --out "$ICON_DIR/icon_16x16.png" >/dev/null
+          sips -z 32 32 "$MASTER" --out "$ICON_DIR/icon_16x16@2x.png" >/dev/null
+          cp "$ICON_DIR/icon_16x16@2x.png" "$ICON_DIR/icon_32x32.png"
+          sips -z 64 64 "$MASTER" --out "$ICON_DIR/icon_32x32@2x.png" >/dev/null
+          sips -z 128 128 "$MASTER" --out "$ICON_DIR/icon_128x128.png" >/dev/null
+          sips -z 256 256 "$MASTER" --out "$ICON_DIR/icon_128x128@2x.png" >/dev/null
+          cp "$ICON_DIR/icon_128x128@2x.png" "$ICON_DIR/icon_256x256.png"
+          sips -z 512 512 "$MASTER" --out "$ICON_DIR/icon_256x256@2x.png" >/dev/null
+          cp "$ICON_DIR/icon_256x256@2x.png" "$ICON_DIR/icon_512x512.png"
+
+      - name: Audit project files
+        shell: bash
+        run: |
+          set -euo pipefail
+          find AirMate AirMateWidget AirMateMobile AirMateMobileWidget AirMateWatch \
+            \( -name '*.plist' -o -name '*.entitlements' \) -print0 | xargs -0 -n1 plutil -lint
+          grep -q 'MARKETING_VERSION=26.15' AirMate.xcodeproj/project.pbxproj
+          grep -q 'CURRENT_PROJECT_VERSION=10' AirMate.xcodeproj/project.pbxproj
+          grep -q 'iCloud.com.almosawi.airmate' AirMate/AirMate.entitlements
+          grep -q 'iCloud.com.almosawi.airmate' AirMateMobile/AirMateMobile.entitlements
+          grep -q 'iCloud.com.almosawi.airmate' AirMateMobileWidget/AirMateMobileWidget.entitlements
+
+      - name: Build Mac + Widget
+        run: xcodebuild -project AirMate.xcodeproj -scheme AirMate -configuration Debug -sdk macosx CODE_SIGNING_ALLOWED=NO build
+
+      - name: Build iPhone/iPad + Widget
+        run: xcodebuild -project AirMate.xcodeproj -scheme AirMateMobile -configuration Debug -sdk iphonesimulator CODE_SIGNING_ALLOWED=NO build
+
+      - name: Build Watch
+        run: xcodebuild -project AirMate.xcodeproj -scheme AirMateWatch -configuration Debug -sdk watchsimulator CODE_SIGNING_ALLOWED=NO build
+
+      - name: Commit repaired project
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "AirMate Repair Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git rm -f .github/workflows/repair-airmate-v2.yml .github/workflows/repair-icloud-icon-battery.yml .github/workflows/trigger-repair.yml || true
+          git commit -m "Fix AirMate iCloud sync icons and battery reporting"
+          git push origin HEAD:main
