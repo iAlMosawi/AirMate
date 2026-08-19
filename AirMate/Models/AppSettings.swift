@@ -2,6 +2,23 @@
 import Combine
 import Foundation
 import ServiceManagement
+import SwiftUI
+
+enum AirMateAppearance: String, CaseIterable, Identifiable {
+    case system
+    case light
+    case dark
+
+    var id: String { rawValue }
+    var title: String { rawValue.capitalized }
+    var colorScheme: ColorScheme? {
+        switch self {
+        case .system: nil
+        case .light: .light
+        case .dark: .dark
+        }
+    }
+}
 
 @MainActor
 final class AppSettings: ObservableObject {
@@ -15,6 +32,7 @@ final class AppSettings: ObservableObject {
     @Published var hideDisconnectedDevices: Bool { didSet { save(hideDisconnectedDevices, "hideDisconnectedDevices") } }
     @Published var showBatteryDevicesOnly: Bool { didSet { save(showBatteryDevicesOnly, "showBatteryDevicesOnly") } }
     @Published var launchAtLogin: Bool { didSet { save(launchAtLogin, "launchAtLogin"); updateLoginItem() } }
+    @Published var appearance: AirMateAppearance { didSet { save(appearance.rawValue, "airmateAppearance") } }
     @Published private(set) var favoriteDeviceIDs: Set<String>
 
     init() {
@@ -30,6 +48,7 @@ final class AppSettings: ObservableObject {
         hideDisconnectedDevices = defaults.object(forKey: "hideDisconnectedDevices") as? Bool ?? false
         showBatteryDevicesOnly = defaults.object(forKey: "showBatteryDevicesOnly") as? Bool ?? false
         launchAtLogin = defaults.object(forKey: "launchAtLogin") as? Bool ?? false
+        appearance = AirMateAppearance(rawValue: defaults.string(forKey: "airmateAppearance") ?? "system") ?? .system
         favoriteDeviceIDs = Set(defaults.stringArray(forKey: "favoriteDeviceIDs") ?? [])
     }
 
